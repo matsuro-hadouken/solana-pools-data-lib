@@ -28,7 +28,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         
         match client.fetch_pools(&[&pool_info.name]).await {
             Ok(pools) => {
-                if let Some((name, data)) = pools.iter().next() {
+                if let Some((_name, data)) = pools.iter().next() {
                     successful += 1;
                     println!("   Success: {} validators, {} accounts, {:.0} SOL", 
                         data.validator_distribution.len(),

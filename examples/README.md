@@ -1,47 +1,35 @@
-# Examples Directory
+# Examples
 
-Examples demonstrating the solana-pools-data-lib with comprehensive configuration options
+## Basic Usage
 
-## 🚀 START HERE
-
-### `start_here.rs` **👋 DEVELOPER ONBOARDING**
-**2-MINUTE OVERVIEW** - Get started immediately with clear next steps:
+### `quick_test.rs`
+Library overview and quick test:
 ```bash
-cargo run --example start_here
+cargo run --example quick_test
 ```
-**Perfect for**: New developers, quick overview, understanding what's available.
 
-## 🎯 ESSENTIAL EXAMPLES
-
-### `complete_config.rs` **📚 COMPLETE CONFIGURATION REFERENCE**
-**THE ULTIMATE DEVELOPER GUIDE** - covers every single configuration option with real-world scenarios:
-```bash
-cargo run --example complete_config
-```
-**Covers**: 6 production scenarios, all parameters, best practices, performance tips, troubleshooting.
-**Perfect for**: Production deployment, optimization, understanding all options.
-
-### `troubleshooting.rs` **🔧 TROUBLESHOOTING & PERFORMANCE**
-**DEBUGGING GUIDE** - diagnose configuration issues and optimize performance:
-```bash
-cargo run --example troubleshooting
-```
-**Covers**: Timeout issues, rate limiting, error handling, performance benchmarking, debugging checklist.
-**Perfect for**: Solving production issues, optimization, debugging.
-
-### `basic.rs` 
-Quick configuration examples with 8s delays:
+### `basic.rs`
+Configuration examples showing rate limiting, timeouts, and 8-second delays:
 ```bash
 cargo run --example basic
 ```
-**Features**: Basic production vs debug configs.
 
 ### `comprehensive.rs`
-All 32 pools with complete analysis - full production implementation:
+Fetch all 32 supported pools:
 ```bash
 cargo run --example comprehensive
 ```
-**Features**: Complete ecosystem coverage, market analysis, detailed statistics.
+
+## Configuration Options
+
+- `rate_limit(n)` - Requests per second
+- `no_rate_limit()` - Remove rate limiting
+- `timeout(seconds)` - Request timeout
+- `retry_attempts(n)` - Number of retries
+- `retry_base_delay(ms)` - Delay between retries
+- `max_concurrent_requests(n)` - Parallel request limit
+
+Use 8-second delays between operations for optimal performance.
 
 ### `quick_test.rs`
 Fast library overview - get familiar with available pools:
