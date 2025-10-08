@@ -97,14 +97,14 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     // Production API - clean data
     println!("   Production API (clean data):");
-    match api_test.fetch_pools(&["marinade"]).await {
+    match api_test.fetch_pools(&["socean"]).await {
         Ok(pools) => {
             let (name, data) = pools.iter().next().unwrap();
-            println!("     {} - {} validators, {} accounts, {:.0} SOL", 
-                name, 
-                data.validator_distribution.len(),
-                data.stake_accounts.len(),
-                data.statistics.total_staked_lamports as f64 / 1e9);
+            println!("     Pool: {}", name);
+            println!("     Format: Production (database-ready)");
+            println!("     Fields: authority, validator_distribution, stake_accounts, statistics");
+            println!("     Example validator: {}", data.validator_distribution.keys().next().unwrap());
+            println!("     Total staked: {:.2} SOL", data.statistics.total_staked_lamports as f64 / 1e9);
         }
         Err(e) => println!("     Error: {}", e),
     }
@@ -113,15 +113,21 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     // Debug API - full RPC data
     println!("   Debug API (full RPC data):");
-    match api_test.fetch_pools_debug(&["marinade"]).await {
+    match api_test.fetch_pools_debug(&["socean"]).await {
         Ok(result) => {
             if let Some((name, data)) = result.successful.iter().next() {
-                println!("     {} - {} validators, {} accounts, {:.0} SOL", 
-                    name,
-                    data.validator_distribution.len(),
-                    data.stake_accounts.len(),
-                    data.statistics.total_staked_lamports as f64 / 1e9);
-                println!("     Debug: Raw RPC fields available for inspection");
+                println!("     Pool: {}", name);
+                println!("     Format: Debug (full RPC response)");
+                println!("     Fields: authority, validator_distribution, stake_accounts, statistics + raw RPC data");
+                println!("     Example validator: {}", data.validator_distribution.keys().next().unwrap());
+                println!("     Total staked: {:.2} SOL", data.statistics.total_staked_lamports as f64 / 1e9);
+                
+                // Show the actual data structure difference
+                println!("     Debug data includes:");
+                println!("       - Raw stake pool account data");
+                println!("       - All RPC response fields");
+                println!("       - Unprocessed validator info");
+                println!("       - Complete account states");
             }
             if !result.failed.is_empty() {
                 println!("     Failed pools: {:?}", result.failed.keys().collect::<Vec<_>>());
@@ -147,8 +153,9 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("  Mobile/Slow:  rate_limit(2), timeout(15), retry_attempts(8)");
     
     println!("\nAPI formats:");
-    println!("  fetch_pools()        - Production format (clean, database-ready)");
-    println!("  fetch_pools_debug()  - Debug format (full RPC data, more fields)");
+    println!("  fetch_pools()        - Production: Clean, processed data for databases");
+    println!("  fetch_pools_debug()  - Debug: Raw RPC response with all original fields");
+    println!("                        Use production for apps, debug for inspection/troubleshooting");
     
     println!("\nAlways use 8-second delays between operations");
     
