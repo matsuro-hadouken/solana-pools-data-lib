@@ -1,94 +1,51 @@
-//! Main demonstration of the Pools Data Library
-//!
-//! This example shows the key features and output optimization capabilities
-//! of the library without making actual RPC calls.
+//! Clean demonstration of the Pools Data Library
 
-use pools_data_lib::PoolsDataClient;
+use solana_pools_data_lib::PoolsDataClient;
 
 #[tokio::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    println!("Solana Pools Data Library - Production-Ready Output Formats");
-    println!("===========================================================");
+    println!("Solana Pools Data Library - Clean & Simple");
+    println!("==========================================");
     
-    println!("\nThree Output Formats Available:");
-    println!("   1. Full Format - Complete RPC data (use for debugging)");
-    println!("   2. Production Format - Consistent schema (RECOMMENDED for backends)");
-    println!("   3. Optimized Format - Variable schema (use with extreme caution)");
+    println!("\nTwo Output Formats Available:");
+    println!("   1. fetch_pools() - Production data (static fields removed)");
+    println!("   2. fetch_pools_debug() - Complete data (ALL fields for debugging)");
     
-    println!("\nUsage Examples:");
-    println!("   // Full format (includes all RPC fields)");
-    println!("   let full_data = client.fetch_pools(&[\"jito\"]).await?;");
+    println!("\n🔧 Usage Examples:");
+    println!("   // Production use");
+    println!("   let production_data = client.fetch_pools(&[\"jito\"]).await?;");
+    println!("   database.store(production_data).await?; // Safe!");
     println!();
-    
-    println!("   // Production format (consistent schema - RECOMMENDED)");
-    println!("   let production_data = client.fetch_pools_production(&[\"jito\"]).await?;");
-    println!();
-    
-    println!("   // Optimized format (variable schema - use with caution)");
-    println!("   let optimized_data = client.fetch_pools_optimized(&[\"jito\"]).await?;");
-    println!();
-    
-    println!("   // Compare all three formats");
-    println!("   let comparison = client.compare_all_output_sizes(&[\"jito\"]).await?;");
-    
+    println!("   // Debugging");
+    println!("   let debug_data = client.fetch_pools_debug(&[\"jito\"]).await?;");
+    println!("   // Contains ALL RPC fields for analysis");
+
     // Show static field analysis
     let analysis = PoolsDataClient::get_static_field_analysis();
-    println!("\nStatic Fields Analysis:");
-    println!("   Rationale: {}\n", analysis.rationale);
     
-    println!("Removed Fields (static/irrelevant - {} fields):", analysis.removed_fields.len());
-    for (i, field) in analysis.removed_fields.iter().enumerate() {
-        println!("   {}. {}", i + 1, field);
+    println!("\n📊 Static Fields Removed in Production Format:");
+    for field in &analysis.static_fields {
+        println!("   • {} = {} ({})", field.name, field.value, field.description);
     }
     
-    println!("\nDynamic fields kept ({} fields):", analysis.kept_fields.len());
-    for (i, field) in analysis.kept_fields.iter().enumerate() {
-        println!("   {}. {}", i + 1, field);
-    }
+    println!("\n💾 Size Optimization:");
+    println!("   • {} bytes saved per account", analysis.size_analysis.estimated_bytes_saved_per_account);
+    println!("   • {:.1}% size reduction", analysis.size_analysis.estimated_size_reduction_percent);
     
-    println!("\nKey Benefits:");
-    println!("   • Reduced JSON payload size");
-    println!("   • Faster network transmission");
-    println!("   • Cleaner API responses");
-    println!("   • Focus on dynamic/relevant data");
-    println!("   • Preserves critical reward tracking (credits_observed)");
-    
-    println!("\nLibrary Setup Example:");
+    println!("\n🚀 Ready to Use:");
     println!("   let client = PoolsDataClient::builder()");
-    println!("       .rate_limit(5) // 5 requests per second");
-    println!("       .retry_attempts(3)");
-    println!("       .timeout(30)");
-    println!("       .max_concurrent_requests(3)");
-    println!("       .build(\"https://api.mainnet-beta.solana.com\")");
+    println!("       .rate_limit(10)");
+    println!("       .build(\"your_rpc_url\")");
     println!("       .and_then(PoolsDataClient::from_config)?;");
     
-    // Show available pools without making RPC calls
-    let client = PoolsDataClient::builder()
-        .build("https://dummy.com") // Won't be used for this demo
+    // Example with public RPC (no actual calls)
+    let _client = PoolsDataClient::builder()
+        .build("https://api.mainnet-beta.solana.com")
         .and_then(PoolsDataClient::from_config)?;
-    
-    let pools = client.list_available_pools();
-    println!("\nAvailable Pools ({} total):", pools.len());
-    for pool in pools.iter().take(10) {
-        println!("   • {} -> {}", pool.name, pool.authority);
-    }
-    if pools.len() > 10 {
-        println!("   ... and {} more pools", pools.len() - 10);
-    }
-    
-    println!("\n🎯 RECOMMENDATIONS:");
-    println!("   ✅ Backend/Database: Use fetch_pools_production()");
-    println!("   ✅ Public APIs: Use fetch_pools_production() with caching");
-    println!("   ⚠️  Special cases: fetch_pools_optimized() with error handling");
-    println!("   ❌ Never: Direct optimized to database storage");
-    
-    println!("\nFor real usage examples, run:");
-    println!("   cargo run --example production_formats");
-    println!("   cargo run --example backend_compatibility");
-    println!("   cargo run --example data_organization");
-    
-    println!("\nThis library is ready for production use.");
-    println!("Configure with your RPC endpoint and start fetching pool data.");
+
+    println!("\n✅ Client ready! Use:");
+    println!("   - client.fetch_pools(&pools) for production");
+    println!("   - client.fetch_pools_debug(&pools) for debugging");
     
     Ok(())
 }

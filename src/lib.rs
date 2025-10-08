@@ -1,32 +1,29 @@
 //! # Pools Data Library
 //!
-//! A Rust library for fetching Solana stake pool data from the blockchain.
-//! This library provides a clean, configurable interface for retrieving stake account
-//! information from various liquid staking pools.
+//! A clean, simple Rust library for fetching Solana stake pool data.
+//! 
+//! ## Two Output Formats
 //!
-//! ## Features
-//!
-//! - Configurable rate limiting for different RPC providers
-//! - Retry logic with exponential backoff
-//! - Partial success handling - get what works, retry what fails
-//! - Granular error handling for better debugging
-//! - Support for all major Solana stake pools
-//! - No caching - pure data fetching library
+//! - **Production**: Clean data with static fields removed (safe for databases)
+//! - **Debug**: Complete RPC data with ALL fields (for debugging)
 //!
 //! ## Example
 //!
 //! ```rust,no_run
-//! use pools_data_lib::PoolsDataClient;
+//! use solana_pools_data_lib::PoolsDataClient;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let client = PoolsDataClient::builder()
-//!         .rate_limit(5) // 5 requests per second
+//!         .rate_limit(10)
 //!         .build("https://api.mainnet-beta.solana.com")
 //!         .and_then(PoolsDataClient::from_config)?;
 //!
-//!     let result = client.fetch_pools(&["jito", "marinade"]).await?;
-//!     println!("Fetched {} pools successfully", result.successful.len());
+//!     // Production use - clean and safe
+//!     let production_data = client.fetch_pools(&["jito", "marinade"]).await?;
+//!     
+//!     // Debug use - complete RPC data
+//!     let debug_data = client.fetch_pools_debug(&["jito"]).await?;
 //!     
 //!     Ok(())
 //! }

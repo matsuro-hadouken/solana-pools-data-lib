@@ -35,7 +35,7 @@ impl PoolsDataClientBuilder {
         Self::default()
     }
 
-    /// Set rate limit in requests per second (None = no rate limiting)
+    /// Set rate limit in requests per second
     pub fn rate_limit(mut self, requests_per_second: u32) -> Self {
         self.rate_limit = Some(requests_per_second);
         self

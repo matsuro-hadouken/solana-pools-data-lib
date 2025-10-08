@@ -1,84 +1,61 @@
-use pools_data_lib::*;
+use solana_pools_data_lib::*;
 
-/// Demonstrate the three output formats with real examples
+/// Clean demonstration of the two output formats
 #[tokio::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    println!("=== Production-Ready Output Formats ===\n");
+    println!("=== Clean Output Formats ===\n");
     
     let client = PoolsDataClient::builder()
         .build("https://api.mainnet-beta.solana.com")
         .and_then(PoolsDataClient::from_config)?;
 
-    let test_pools = ["jito", "foundation"];
+    let test_pools = ["jito", "marinade"];
     
     println!("🔍 Testing with pools: {:?}\n", test_pools);
     
-    // Test all three formats
-    println!("📊 1. FULL FORMAT (Complete RPC data)");
-    let full_result = client.fetch_pools(&test_pools).await?;
-    if let Some(pool_data) = full_result.successful.values().next() {
-        if let Some(account) = pool_data.stake_accounts.first() {
-            let json = serde_json::to_string_pretty(account)?;
-            println!("   Sample account (full):");
-            println!("{}", json.lines().take(15).collect::<Vec<_>>().join("\n"));
-            println!("   ... (truncated)\n");
-        }
-    }
-    
-    println!("✅ 2. PRODUCTION FORMAT (Consistent schema - RECOMMENDED)");
-    let production_result = client.fetch_pools_production(&test_pools).await?;
-    if let Some(pool_data) = production_result.values().next() {
-        if let Some(account) = pool_data.stake_accounts.first() {
-            let json = serde_json::to_string_pretty(account)?;
-            println!("   Sample account (production):");
-            println!("{}", json);
+    // Production format - clean and safe
+    println!("📊 1. PRODUCTION FORMAT (Clean data for databases/APIs)");
+    match client.fetch_pools(&test_pools).await {
+        Ok(production_data) => {
+            let json = serde_json::to_string_pretty(&production_data)?;
+            println!("✅ Success! Size: {} bytes", json.len());
             
-            println!("\n   ✅ BENEFITS:");
-            println!("      • Same JSON schema every time");
-            println!("      • Always includes lockup and authority");
-            println!("      • Safe for database storage");
-            println!("      • Removes only truly static fields");
+            if let Some((name, pool_data)) = production_data.iter().next() {
+                println!("   Pool: {}", name);
+                println!("   Authority: {}", pool_data.authority);
+                println!("   Accounts: {}", pool_data.stake_accounts.len());
+                println!("   Validators: {}", pool_data.validator_distribution.len());
+            }
         }
+        Err(e) => println!("❌ Error: {}", e),
     }
     
-    println!("\n⚠️  3. OPTIMIZED FORMAT (Variable schema - USE WITH CAUTION)");
-    let optimized_result = client.fetch_pools_optimized(&test_pools).await?;
-    if let Some(pool_data) = optimized_result.values().next() {
-        if let Some(account) = pool_data.stake_accounts.first() {
-            let json = serde_json::to_string_pretty(account)?;
-            println!("   Sample account (optimized):");
-            println!("{}", json);
+    println!();
+    
+    // Debug format - complete data
+    println!("🔍 2. DEBUG FORMAT (Complete RPC data)");
+    match client.fetch_pools_debug(&test_pools).await {
+        Ok(debug_result) => {
+            let json = serde_json::to_string_pretty(&debug_result)?;
+            println!("✅ Success! Size: {} bytes", json.len());
+            println!("   Successful: {}", debug_result.successful.len());
+            println!("   Failed: {}", debug_result.failed.len());
             
-            println!("\n   ⚠️  RISKS:");
-            println!("      • JSON schema can change suddenly");
-            println!("      • Optional fields appear/disappear");
-            println!("      • Can break database schemas");
-            println!("      • Dangerous for production storage");
+            if let Some((name, pool_data)) = debug_result.successful.iter().next() {
+                println!("   Pool: {}", name);
+                println!("   Authority: {}", pool_data.authority);
+                println!("   Accounts: {}", pool_data.stake_accounts.len());
+                
+                if let Some(account) = pool_data.stake_accounts.first() {
+                    println!("   First account has {} fields", 
+                        serde_json::to_value(account)?.as_object().unwrap().len());
+                }
+            }
         }
+        Err(e) => println!("❌ Error: {}", e),
     }
-    
-    // Size comparison
-    println!("\n📏 SIZE COMPARISON:");
-    let comparison = client.compare_all_output_sizes(&["jito"]).await?;
-    
-    println!("   Full format:       {:>8} bytes (100%)", comparison.full_size_bytes);
-    println!("   Production format: {:>8} bytes ({:.1}% reduction)", 
-             comparison.production_size_bytes, 
-             comparison.production_reduction_percent);
-    println!("   Optimized format:  {:>8} bytes ({:.1}% reduction)", 
-             comparison.optimized_size_bytes, 
-             comparison.optimized_reduction_percent);
-    
-    println!("\n🎯 RECOMMENDATION:");
-    println!("   ✅ Backend/Database: Use fetch_pools_production()");
-    println!("   ✅ Public APIs: Use fetch_pools_production() with caching");
-    println!("   ⚠️  Special cases only: fetch_pools_optimized() with error handling");
-    println!("   ❌ Never: Direct optimized to database storage");
-    
-    println!("\n💡 The production format gives you:");
-    println!("   • {:.1}% size reduction vs full format", comparison.production_reduction_percent);
-    println!("   • Predictable JSON schema");
-    println!("   • Safe for all production use cases");
+
+    println!("\n✅ Clean and simple - no confusing warnings or complex choices!");
     
     Ok(())
 }

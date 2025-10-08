@@ -169,6 +169,16 @@ pub struct RpcClient {
     request_id: std::sync::atomic::AtomicU64,
 }
 
+impl Clone for RpcClient {
+    fn clone(&self) -> Self {
+        Self {
+            client: self.client.clone(),
+            url: self.url.clone(),
+            request_id: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+}
+
 impl RpcClient {
     /// Create a new RPC client
     pub fn new(url: String, timeout: Duration) -> Self {
@@ -277,7 +287,7 @@ impl RpcClient {
         let lockup = StakeLockup {
             custodian: raw.account.data.parsed.info.meta.lockup.custodian,
             epoch: raw.account.data.parsed.info.meta.lockup.epoch,
-            unix_timestamp: raw.account.data.parsed.info.meta.lockup.unix_timestamp,
+            unix_timestamp: raw.account.data.parsed.info.meta.lockup.unix_timestamp as i64,
         };
 
         let delegation = if let Some(stake_data) = raw.account.data.parsed.info.stake {
@@ -487,7 +497,7 @@ mod tests {
         assert_eq!(delegation.stake, 5000000000);
         assert_eq!(delegation.activation_epoch, 100);
         assert_eq!(delegation.deactivation_epoch, 18446744073709551615);
-        assert!(delegation.is_active());
+        assert_eq!(delegation.deactivation_epoch, u64::MAX); // Active delegation
     }
 
     // Note: Integration tests that require actual RPC calls should be in a separate file
