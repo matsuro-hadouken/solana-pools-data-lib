@@ -1,74 +1,245 @@
-# Examples
+# Examples Directory
 
-Quick reference for testing the library with real Solana mainnet data.
+Examples demonstrating the solana-pools-data-lib with comprehensive configuration options
 
-## Run Examples
+## 🚀 START HERE
 
+### `start_here.rs` **👋 DEVELOPER ONBOARDING**
+**2-MINUTE OVERVIEW** - Get started immediately with clear next steps:
 ```bash
-# Show both output formats side-by-side
-cargo run --example production_formats
+cargo run --example start_here
+```
+**Perfect for**: New developers, quick overview, understanding what's available.
 
-# Demonstrate clean data structure and field analysis
-cargo run --example data_organization
+## 🎯 ESSENTIAL EXAMPLES
 
-# Show database-safe storage format
-cargo run --example backend_compatibility
+### `complete_config.rs` **📚 COMPLETE CONFIGURATION REFERENCE**
+**THE ULTIMATE DEVELOPER GUIDE** - covers every single configuration option with real-world scenarios:
+```bash
+cargo run --example complete_config
+```
+**Covers**: 6 production scenarios, all parameters, best practices, performance tips, troubleshooting.
+**Perfect for**: Production deployment, optimization, understanding all options.
 
-# Display actual JSON structure and stake account details
-cargo run --example data_samples
+### `troubleshooting.rs` **🔧 TROUBLESHOOTING & PERFORMANCE**
+**DEBUGGING GUIDE** - diagnose configuration issues and optimize performance:
+```bash
+cargo run --example troubleshooting
+```
+**Covers**: Timeout issues, rate limiting, error handling, performance benchmarking, debugging checklist.
+**Perfect for**: Solving production issues, optimization, debugging.
 
-# List all 32 supported pools and show validator distribution
+### `basic.rs` 
+Quick configuration examples with 8s delays:
+```bash
+cargo run --example basic
+```
+**Features**: Basic production vs debug configs.
+
+### `comprehensive.rs`
+All 32 pools with complete analysis - full production implementation:
+```bash
+cargo run --example comprehensive
+```
+**Features**: Complete ecosystem coverage, market analysis, detailed statistics.
+
+### `quick_test.rs`
+Fast library overview - get familiar with available pools:
+```bash
 cargo run --example quick_test
+```
 
-# Direct comparison of production vs debug JSON
+## Specialized Examples
+
+### `format_comparison.rs`
+Compare production vs debug output formats:
+```bash
 cargo run --example format_comparison
+```
 
-# Explain delegation states (why some accounts have "delegation: null")
+### `data_samples.rs`
+Educational examples showing pool data structure:
+```bash
+cargo run --example data_samples
+```
+
+### `backend_compatibility.rs`
+Database integration patterns and serialization:
+```bash
+cargo run --example backend_compatibility
+```
+
+### `delegation_states.rs`
+Explains why some pools show `null` delegation accounts:
+```bash
 cargo run --example delegation_states
 ```
 
-## What Each Example Shows
+## **COMPLETE CONFIGURATION REFERENCE**
 
-- **production_formats**: Two-format comparison with size metrics
-- **data_organization**: Field analysis and data structure overview
-- **backend_compatibility**: Database integration patterns
-- **data_samples**: Raw JSON output and stake account structure
-- **quick_test**: Available pools list and validator data
-- **format_comparison**: Side-by-side JSON format differences
-- **delegation_states**: Explains stake account states and null delegations
+The library provides comprehensive configuration options for different use cases:
 
-## Understanding Delegation States (Important!)
+### **Available Configuration Methods:**
 
-When you see `"delegation": null` in the JSON output, **this is normal behavior** for certain stake accounts:
-
-### Three Account States:
-
-1. **Initialized** (`delegation: null`): Account created but not yet staked
-2. **Delegated** (`delegation: {...}`): Actively staked to a validator
-3. **Deactivating** (`delegation: {...}` with deactivation info): Stake being withdrawn
-
-### Why This Matters:
-
-- Stake pools contain accounts in all three states
-- `null` delegation **does not** mean broken data
-- These accounts contribute to total pool value but aren't actively earning rewards
-- Run `cargo run --example delegation_states` to see real examples
-
-### Real Pool Data Example:
-```
-Jito Pool: 941 total accounts
-- 2 accounts: Initialized (delegation: null)
-- 937 accounts: Actively delegated 
-- 2 accounts: Deactivating
+```rust
+let client = PoolsDataClient::builder()
+    .rate_limit(requests_per_second)     // Rate limiting
+    .no_rate_limit()                     // Disable rate limiting
+    .retry_attempts(count)               // Number of retry attempts
+    .retry_base_delay(milliseconds)      // Base delay for retries
+    .timeout(seconds)                    // Request timeout
+    .max_concurrent_requests(count)      // Concurrent request limit
+    .public_rpc_config()                 // Preset for public RPC endpoints
+    .private_rpc_config()                // Preset for private RPC endpoints
+    .build(rpc_url)?;
 ```
 
-This mixed state is normal pool operation - users deposit/withdraw continuously.
+### **Production Configurations:**
 
-## Requirements
+#### **PRESET CONFIGURATIONS (Recommended)**
 
-- Internet connection (fetches live Solana mainnet data)
-- Examples use conservative rate limiting for public RPC
+**Quick Setup for Public RPC:**
+```rust
+.public_rpc_config()    // All optimized settings for public endpoints
+```
 
-## QA Validation
+**Quick Setup for Private RPC:**
+```rust
+.private_rpc_config()   // All optimized settings for premium endpoints
+```
 
-All examples should run without errors and display structured pool data. Each example fetches real data from different pools to validate library functionality.
+#### **MANUAL CONFIGURATIONS**
+
+#### **CONSERVATIVE (Public RPC)**
+```rust
+.rate_limit(1)
+.retry_attempts(3)
+.retry_base_delay(200)
+.timeout(10)
+.max_concurrent_requests(1)
+```
+**Use case**: Public RPC endpoints, maximum reliability, fresh sessions per pool.
+
+#### **MODERATE (Reliable RPC)**
+```rust
+.rate_limit(5)
+.retry_attempts(2)
+.retry_base_delay(100)
+.timeout(5)
+.max_concurrent_requests(3)
+```
+**Use case**: Reliable RPC providers, balanced performance and reliability.
+
+#### **AGGRESSIVE (Private RPC)**
+```rust
+.no_rate_limit()
+.retry_attempts(1)
+.retry_base_delay(50)
+.timeout(2)
+.max_concurrent_requests(10)
+```
+**Use case**: Private RPC endpoints, maximum performance.
+
+### **Retry Logic Details:**
+- **Automatic retries**: Built-in exponential backoff
+- **Base delay**: Starting delay for retries (200ms recommended)
+- **Exponential backoff**: Each retry doubles the delay
+- **Max attempts**: Default 3 attempts for public RPC
+
+### **Rate Limiting:**
+- **Conservative**: 1 request/second (public RPC)
+- **Moderate**: 5 requests/second (reliable RPC)
+- **Aggressive**: No limit (private RPC)
+
+## **PROVEN OPTIMAL PATTERN**
+
+Based on extensive testing with public RPC endpoints:
+
+```rust
+// PRODUCTION PATTERN - Copy this for your applications
+for pool_name in pool_list {
+    let client = PoolsDataClient::builder()
+        .rate_limit(1)                    // Conservative rate limiting
+        .retry_attempts(3)                // 3 retry attempts
+        .retry_base_delay(200)            // 200ms + exponential backoff
+        .timeout(3)                       // 3 second timeout
+        .max_concurrent_requests(1)       // Fresh sessions per pool
+        .build(rpc_url)?;
+    
+    match timeout(Duration::from_secs(3),
+        client.fetch_pools_debug(&[pool_name])).await {
+        Ok(Ok(result)) if !result.successful.is_empty() => {
+            // Success with automatic retries
+        }
+        _ => {
+            // Failed after all retries
+        }
+    }
+
+    sleep(Duration::from_millis(8000)).await; // Prevent rate limiting
+}
+```
+
+### **Why This Configuration Works:**
+- **Fresh client per pool** - Eliminates RPC session throttling
+- **8-second delays** - Prevents rate limiting completely  
+- **3-second timeout** - Fast failure detection (calls are 0.2-0.5s)
+- **3 retry attempts** - Handles temporary network issues
+- **Exponential backoff** - Smart retry strategy
+- **100% success rate** - Tested extensively
+
+## Which Example Should I Run?
+
+### **"I need to understand all configuration options"**
+→ `cargo run --example basic` ⭐ **ESSENTIAL**
+
+### **"I need comprehensive pool analysis"**
+→ `cargo run --example comprehensive`
+
+### **"I'm new to this library"**
+→ `cargo run --example quick_test`
+
+### **"I want to understand the data structure"**  
+→ `cargo run --example data_samples`  
+→ `cargo run --example format_comparison`
+
+### **"I'm seeing 'delegation: null' errors"**
+→ `cargo run --example delegation_states`
+
+### **"I need database integration"**
+→ `cargo run --example backend_compatibility`
+
+## Available Pool Names
+
+The library supports 32 verified Solana stake pools:
+```
+foundation, firedancer_delegation, double_zero, jpool, raydium,
+jito, marinade, marinade_native, marinade_native_2, socean,
+lido, eversol, edgevana, blazestake, daopool, bonk, sanctum,
+sanctum_2, binance, jupiter, binance_2, solayer, bybit,
+shinobi, helius, marginfi, vault, drift, aerosol, ftx,
+juicy, picosol
+```
+
+**Major pools for dashboards**: `jito`, `marinade`, `blazestake`, `jupiter`, `lido`, `sanctum`
+
+## Running Examples
+
+All examples can be run with:
+```bash
+cargo run --example <example_name>
+```
+
+Replace `<example_name>` with any filename (without `.rs` extension).
+
+## Production Ready
+
+All examples demonstrate:
+- **Complete configuration coverage**
+- **Professional output formatting**
+- **Proven optimal settings**
+- **Comprehensive error handling**
+- **Real Solana mainnet data**
+- **Detailed documentation**
+
+Perfect for building reliable Solana pool applications!

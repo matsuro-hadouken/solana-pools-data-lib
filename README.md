@@ -2,17 +2,39 @@
 
 Clean, simple Rust library for fetching Solana stake pool data.
 
-## Two Output Formats
+> **Note**: This library is currently in development. Install directly from GitHub until published to crates.io.
 
-- **Production**: Clean data, safe for databases and APIs
-- **Debug**: Complete RPC data with all fields for debugging
+## Features
+
+- **Two Output Formats**: Production (clean) and Debug (complete RPC data)
+- **32 Supported Pools**: All major Solana stake pools included
+- **Production Ready**: Rate limiting, retries, timeout handling
+- **Safe by Design**: Consistent schemas, no breaking changes
 
 ## Installation
+
+### From GitHub (Current)
+
+```toml
+[dependencies]
+solana-pools-data-lib = { git = "https://github.com/matsuro-hadouken/solana-pools-data-lib" }
+tokio = { version = "1.0", features = ["full"] }
+```
+
+### Future: From Crates.io (When Published)
 
 ```toml
 [dependencies]
 solana-pools-data-lib = "0.1.0"
 tokio = { version = "1.0", features = ["full"] }
+```
+
+### Clone and Test Locally
+
+```bash
+git clone https://github.com/matsuro-hadouken/solana-pools-data-lib.git
+cd solana-pools-data-lib/pools-data-lib
+cargo run --example quick_test
 ```
 
 ## Quick Start
@@ -23,40 +45,42 @@ use solana_pools_data_lib::PoolsDataClient;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = PoolsDataClient::builder()
-        .rate_limit(10)
+        .rate_limit(5)
         .build("https://api.mainnet-beta.solana.com")
         .and_then(PoolsDataClient::from_config)?;
 
-    // Production use - clean and safe
+    // Production format - clean and safe for databases
     let pools = client.fetch_pools(&["jito", "marinade"]).await?;
-    println!("Fetched {} pools", pools.len());
+    
+    for (pool_name, pool_data) in pools {
+        println!("Pool: {}", pool_name);
+        println!("  Authority: {}", pool_data.authority);
+        println!("  Accounts: {}", pool_data.stake_accounts.len());
+        println!("  Validators: {}", pool_data.validator_distribution.len());
+    }
     
     Ok(())
 }
 ```
 
-## Usage
+## Two Output Formats
 
-### Production Format
-
-Clean data with static fields removed. Safe for databases and APIs.
+### Production Format - Clean and Safe
 
 ```rust
 let pools = client.fetch_pools(&["jito", "marinade"]).await?;
 
 for (pool_name, pool_data) in pools {
     println!("Pool: {}", pool_name);
-    println!("Authority: {}", pool_data.authority);
-    println!("Accounts: {}", pool_data.stake_accounts.len());
-    
-    // Safe to store in database - schema never changes
-    database.insert(&pool_name, &pool_data).await?;
+    println!("  Authority: {}", pool_data.authority);
+    println!("  Accounts: {}", pool_data.stake_accounts.len());
+    println!("  Validators: {}", pool_data.validator_distribution.len());
+    println!("  Total Staked: {:.2} SOL", 
+        pool_data.statistics.total_staked_lamports as f64 / 1_000_000_000.0);
 }
 ```
 
-### Debug Format
-
-Complete RPC data with all fields for debugging and analysis.
+### Debug Format - Raw RPC Response
 
 ```rust
 let debug_result = client.fetch_pools_debug(&["jito"]).await?;
@@ -70,33 +94,49 @@ for (pool_name, error) in &debug_result.failed {
 for (pool_name, pool_data) in &debug_result.successful {
     println!("Pool {}: {} accounts", pool_name, pool_data.stake_accounts.len());
     
-    // All RPC fields available for analysis
-    for account in &pool_data.stake_accounts {
-        println!("  {} lamports", account.lamports);
-        // Access all fields: rent_exempt_reserve, warmup_cooldown_rate, etc.
+    // Access all RPC fields for debugging
+    for account in &pool_data.stake_accounts.iter().take(3) {
+        println!("  Account: {}", account.pubkey);
+        println!("    Lamports: {}", account.lamports);
+        println!("    Rent Exempt Reserve: {}", account.rent_exempt_reserve);
     }
 }
 ```
 
 ## Configuration
 
-### Public RPC (Rate Limited)
+### Quick Setup with Presets
 
 ```rust
+// Public RPC - optimized for public endpoints
 let client = PoolsDataClient::builder()
-    .rate_limit(2)      // Conservative for public RPC
-    .timeout(30)
-    .retry_attempts(3)
+    .public_rpc_config()
     .build("https://api.mainnet-beta.solana.com")
+    .and_then(PoolsDataClient::from_config)?;
+
+// Private RPC - optimized for premium endpoints  
+let client = PoolsDataClient::builder()
+    .private_rpc_config()
+    .build("your_private_rpc_url")
     .and_then(PoolsDataClient::from_config)?;
 ```
 
-### Private RPC (Higher Limits)
+### Manual Configuration
 
 ```rust
+// Conservative for public RPC
 let client = PoolsDataClient::builder()
-    .rate_limit(20)     // Higher limit for private RPC
-    .timeout(15)
+    .rate_limit(1)
+    .retry_attempts(3)
+    .timeout(10)
+    .build("https://api.mainnet-beta.solana.com")
+    .and_then(PoolsDataClient::from_config)?;
+
+// Aggressive for private RPC
+let client = PoolsDataClient::builder()
+    .no_rate_limit()
+    .retry_attempts(1)
+    .timeout(2)
     .max_concurrent_requests(10)
     .build("your_private_rpc_url")
     .and_then(PoolsDataClient::from_config)?;
@@ -104,96 +144,102 @@ let client = PoolsDataClient::builder()
 
 ## Supported Pools
 
-The library supports all major Solana stake pools:
-
-- Jito
-- Marinade
-- Lido
-- Cogent
-- Socean
-- daoPool
-- And 25+ more
+The library supports **32 major Solana stake pools**:
 
 ```rust
 // Get list of all supported pools
 let available_pools = PoolsDataClient::list_available_pools();
 for pool in available_pools {
-    println!("Pool: {} ({})", pool.name, pool.authority);
+    println!("Pool: {} (Authority: {})", pool.name, pool.authority);
 }
 ```
+
+**Major pools include**: Jito, Marinade, Lido, Blazestake, Jupiter, Sanctum, and more.
 
 ## Error Handling
 
 ```rust
 match client.fetch_pools(&["jito"]).await {
     Ok(pools) => {
-        // Process successful results
         for (pool_name, pool_data) in pools {
-            process_pool(pool_name, pool_data).await?;
+            println!("Pool {} has {} accounts", pool_name, pool_data.stake_accounts.len());
         }
     }
     Err(e) => {
-        // Handle error
         eprintln!("Failed to fetch pools: {}", e);
-        return Err(e.into());
     }
 }
 ```
 
-## Integration Examples
-
-### REST API
-
-```rust
-use axum::{extract::Path, response::Json};
-
-async fn get_pool(Path(pool_name): Path<String>) -> Json<ProductionPoolData> {
-    let client = get_client(); // Your client instance
-    let pools = client.fetch_pools(&[&pool_name]).await.unwrap();
-    Json(pools[&pool_name].clone())
-}
-```
+## Common Use Cases
 
 ### Database Storage
 
 ```rust
-// Production format has consistent schema - safe for databases
-let pools = client.fetch_pools(&["jito"]).await?;
+// Production format is safe for databases - schema never changes
+let pools = client.fetch_pools(&["jito", "marinade"]).await?;
 
 for (pool_name, pool_data) in pools {
     let json = serde_json::to_string(&pool_data)?;
-    database.insert(&pool_name, &json).await?; // Always safe
+    database.insert(&pool_name, &json).await?;
+}
+```
+
+### REST API Integration
+
+```rust
+// Simple integration with web frameworks
+async fn get_pool_data(pool_name: &str) -> Result<PoolData, Error> {
+    let client = PoolsDataClient::builder()
+        .public_rpc_config()
+        .build("https://api.mainnet-beta.solana.com")
+        .and_then(PoolsDataClient::from_config)?;
+        
+    let pools = client.fetch_pools(&[pool_name]).await?;
+    Ok(pools.into_values().next().unwrap())
 }
 ```
 
 ### Batch Processing
 
 ```rust
+// Process multiple pools efficiently
 let all_pools = PoolsDataClient::list_available_pools();
 let pool_names: Vec<&str> = all_pools.iter().map(|p| p.name.as_str()).collect();
 
-for batch in pool_names.chunks(5) {
+// Process in small batches to avoid rate limiting
+for batch in pool_names.chunks(3) {
     let pools = client.fetch_pools(batch).await?;
-    process_batch(pools).await?;
+    println!("Processed {} pools", pools.len());
     
-    // Rate limiting between batches
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Brief pause between batches
+    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
 }
 ```
 
-## Features
+## Examples
 
-- **Clean API**: Two simple methods, no confusing choices
-- **Safe by Design**: Production format never changes schema
-- **Complete Data**: Debug format includes all RPC fields
-- **Configurable**: Rate limiting, timeouts, retries
-- **Reliable**: Exponential backoff, partial failure handling
-- **Production Ready**: Used in enterprise applications
+Run these examples to see the library in action:
 
-## Documentation
+```bash
+# Quick overview
+cargo run --example quick_test
 
-- [Getting Started](GETTING_STARTED.md) - Quick 2-minute setup
-- [Integration Guide](INTEGRATION.md) - Production patterns and examples
+# Complete configuration reference
+cargo run --example basic
+
+# All 32 pools
+cargo run --example comprehensive
+
+# Format comparison
+cargo run --example format_comparison
+```
+
+## Additional Documentation
+
+- **[Examples](examples/README.md)** - Complete configuration reference
+- **[Getting Started](GETTING_STARTED.md)** - Quick 2-minute setup
+- **[Integration Guide](INTEGRATION.md)** - Production patterns
 
 ## License
 

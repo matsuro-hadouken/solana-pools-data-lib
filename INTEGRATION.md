@@ -1,19 +1,23 @@
 # Integration Guide
 
-Simple patterns for using the library in production systems.
+Production patterns for using the Solana Pools Data Library in real applications.
 
-## Basic Usage
+## Quick Configuration
 
 ```rust
 use solana_pools_data_lib::PoolsDataClient;
 
-// Production data - clean and safe
+// Public RPC - use preset configuration
 let client = PoolsDataClient::builder()
-    .rate_limit(10)
-    .build("your_rpc_url")
+    .public_rpc_config()
+    .build("https://api.mainnet-beta.solana.com")
     .and_then(PoolsDataClient::from_config)?;
 
-let pools = client.fetch_pools(&["jito", "marinade"]).await?;
+// Private RPC - use preset configuration
+let client = PoolsDataClient::builder()
+    .private_rpc_config()
+    .build("your_private_rpc_url")
+    .and_then(PoolsDataClient::from_config)?;
 ```
 
 ## Database Storage
@@ -22,59 +26,75 @@ let pools = client.fetch_pools(&["jito", "marinade"]).await?;
 use serde_json;
 
 // Production format has consistent schema - safe for databases
-let pools = client.fetch_pools(&["jito"]).await?;
+let pools = client.fetch_pools(&["jito", "marinade"]).await?;
 
 for (pool_name, pool_data) in pools {
     let json = serde_json::to_string(&pool_data)?;
     
     // Safe to store - schema never changes
     database.insert(&pool_name, &json).await?;
+    
+    println!("Stored pool {} with {} accounts", 
+        pool_name, pool_data.stake_accounts.len());
 }
 ```
 
-## REST API
+## REST API Integration
 
 ```rust
-use axum::{extract::Path, response::Json, Router};
+use axum::{extract::Path, response::Json, Router, routing::get};
+use serde_json::Value;
 
-async fn get_pool(Path(pool_name): Path<String>) -> Json<ProductionPoolData> {
-    let client = get_client(); // Your client instance
-    let pools = client.fetch_pools(&[&pool_name]).await.unwrap();
+// Simple endpoint that returns pool data
+async fn get_pool_handler(Path(pool_name): Path<String>) -> Result<Json<Value>, String> {
+    let client = PoolsDataClient::builder()
+        .public_rpc_config()
+        .build("https://api.mainnet-beta.solana.com")
+        .and_then(PoolsDataClient::from_config)
+        .map_err(|e| e.to_string())?;
+        
+    let pools = client.fetch_pools(&[&pool_name]).await
+        .map_err(|e| e.to_string())?;
     
-    Json(pools[&pool_name].clone())
+    if let Some(pool_data) = pools.into_values().next() {
+        Ok(Json(serde_json::to_value(pool_data).unwrap()))
+    } else {
+        Err(format!("Pool {} not found", pool_name))
+    }
 }
 
-pub fn routes() -> Router {
-    Router::new().route("/pools/:name", axum::routing::get(get_pool))
+pub fn create_routes() -> Router {
+    Router::new().route("/pools/:name", get(get_pool_handler))
 }
 ```
 
 ## Error Handling
 
 ```rust
-match client.fetch_pools(&["jito"]).await {
+match client.fetch_pools(&["jito", "marinade"]).await {
     Ok(pools) => {
-        // Success - process data
-        process_pools(pools).await?;
+        println!("Successfully fetched {} pools", pools.len());
+        for (pool_name, pool_data) in pools {
+            println!("Pool {}: {} accounts", pool_name, pool_data.stake_accounts.len());
+        }
     }
     Err(e) => {
-        // Handle error
-        log::error!("Failed to fetch pools: {}", e);
-        return Err(e.into());
+        eprintln!("Failed to fetch pools: {}", e);
+        // Handle error appropriately for your application
     }
 }
 ```
 
-## Debug Mode
+## Debug Mode for Troubleshooting
 
 ```rust
-// Use debug format when you need complete information
+// Use debug format when you need complete RPC information
 let debug_result = client.fetch_pools_debug(&["jito"]).await?;
 
 // Check for partial failures
 if !debug_result.failed.is_empty() {
     for (pool_name, error) in &debug_result.failed {
-        log::warn!("Pool {} failed: {}", pool_name, error.error);
+        println!("Pool {} failed: {}", pool_name, error.error);
     }
 }
 
@@ -82,10 +102,15 @@ if !debug_result.failed.is_empty() {
 for (pool_name, pool_data) in &debug_result.successful {
     println!("Pool {}: {} stake accounts", pool_name, pool_data.stake_accounts.len());
     
-    // Complete data available for analysis
-    for account in &pool_data.stake_accounts {
+    // Complete RPC data available for analysis
+    for account in pool_data.stake_accounts.iter().take(3) {
         println!("  Account {}: {} lamports", account.pubkey, account.lamports);
-        // All RPC fields available: rent_exempt_reserve, warmup_cooldown_rate, etc.
+        println!("    Rent exempt reserve: {}", account.rent_exempt_reserve);
+        
+        if let Some(delegation) = &account.delegation {
+            println!("    Delegated to: {}", delegation.voter);
+            println!("    Stake: {} lamports", delegation.stake);
+        }
     }
 }
 ```
@@ -94,15 +119,24 @@ for (pool_name, pool_data) in &debug_result.successful {
 
 ```rust
 use std::time::{Duration, Instant};
+use std::collections::HashMap;
 
-struct CachedClient {
+struct CachedPoolClient {
     client: PoolsDataClient,
-    cache: HashMap<String, (ProductionPoolData, Instant)>,
+    cache: HashMap<String, (serde_json::Value, Instant)>,
     cache_ttl: Duration,
 }
 
-impl CachedClient {
-    pub async fn get_pool(&mut self, pool_name: &str) -> Result<ProductionPoolData> {
+impl CachedPoolClient {
+    pub fn new(client: PoolsDataClient, cache_ttl: Duration) -> Self {
+        Self {
+            client,
+            cache: HashMap::new(),
+            cache_ttl,
+        }
+    }
+    
+    pub async fn get_pool(&mut self, pool_name: &str) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
         // Check cache
         if let Some((data, timestamp)) = self.cache.get(pool_name) {
             if timestamp.elapsed() < self.cache_ttl {
@@ -112,12 +146,16 @@ impl CachedClient {
         
         // Fetch fresh data
         let pools = self.client.fetch_pools(&[pool_name]).await?;
-        let pool_data = pools[pool_name].clone();
-        
-        // Update cache
-        self.cache.insert(pool_name.to_string(), (pool_data.clone(), Instant::now()));
-        
-        Ok(pool_data)
+        if let Some(pool_data) = pools.into_values().next() {
+            let json_value = serde_json::to_value(pool_data)?;
+            
+            // Update cache
+            self.cache.insert(pool_name.to_string(), (json_value.clone(), Instant::now()));
+            
+            Ok(json_value)
+        } else {
+            Err(format!("Pool {} not found", pool_name).into())
+        }
     }
 }
 ```
@@ -125,68 +163,84 @@ impl CachedClient {
 ## Batch Processing
 
 ```rust
+use tokio::time::{sleep, Duration};
+
 // Process all available pools in batches
 let all_pools = PoolsDataClient::list_available_pools();
 let pool_names: Vec<&str> = all_pools.iter().map(|p| p.name.as_str()).collect();
 
-for batch in pool_names.chunks(5) {
+println!("Processing {} pools in batches of 3...", pool_names.len());
+
+for (batch_num, batch) in pool_names.chunks(3).enumerate() {
+    println!("Batch {}: {:?}", batch_num + 1, batch);
+    
     match client.fetch_pools(batch).await {
         Ok(pools) => {
-            process_batch(pools).await?;
+            for (pool_name, pool_data) in pools {
+                println!("  {} - {} accounts, {} validators", 
+                    pool_name, 
+                    pool_data.stake_accounts.len(),
+                    pool_data.validator_distribution.len()
+                );
+            }
         }
         Err(e) => {
-            log::error!("Batch failed: {}", e);
+            println!("  Batch {} failed: {}", batch_num + 1, e);
             continue; // Skip failed batch
         }
     }
     
     // Rate limiting between batches
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    sleep(Duration::from_millis(2000)).await;
 }
 ```
 
-## Configuration for Different RPC Providers
+## Custom Configuration
 
 ```rust
-// Public RPC (rate limited)
+// For different RPC providers, adjust settings accordingly
+
+// Conservative (Public RPC)
 let client = PoolsDataClient::builder()
-    .rate_limit(2)  // Conservative
-    .timeout(30)
-    .retry_attempts(3)
+    .rate_limit(1)              // Very conservative
+    .retry_attempts(3)          // More retries
+    .timeout(10)                // Longer timeout
     .build("https://api.mainnet-beta.solana.com")
     .and_then(PoolsDataClient::from_config)?;
 
-// Private RPC (higher limits)
+// Aggressive (Private RPC)
 let client = PoolsDataClient::builder()
-    .rate_limit(20)  // Higher limit
-    .timeout(15)     // Faster timeout
-    .max_concurrent_requests(10)
+    .no_rate_limit()            // No limits
+    .retry_attempts(1)          // Fewer retries
+    .timeout(2)                 // Faster timeout
+    .max_concurrent_requests(10) // More concurrent requests
     .build("your_private_rpc_url")
     .and_then(PoolsDataClient::from_config)?;
 ```
 
 ## Production Checklist
 
-- ✅ Use `fetch_pools()` for production (clean data)
-- ✅ Use `fetch_pools_debug()` only for debugging
-- ✅ Set appropriate rate limits for your RPC provider
-- ✅ Implement error handling and logging
+- ✅ Use **preset configurations** for quick setup (`.public_rpc_config()`, `.private_rpc_config()`)
+- ✅ Use `fetch_pools()` for production (clean, consistent schema)
+- ✅ Use `fetch_pools_debug()` only for debugging and analysis
+- ✅ Implement proper error handling and logging
 - ✅ Add caching for frequently accessed data
-- ✅ Use batch processing for multiple pools
+- ✅ Use batch processing for multiple pools (chunks of 3-5)
+- ✅ Add rate limiting between batches (1-2 second delays)
 - ✅ Test with real data before deploying
 
-## Why This Design is Better
+## Working Examples
 
-**Before (3 confusing formats):**
-- Complex warnings and documentation
-- Risk of using wrong format
-- Inconsistent schemas breaking databases
+```bash
+# See all configuration options
+cargo run --example basic
 
-**Now (2 simple formats):**
-- Clear purpose: production vs debug
-- No confusing warnings or choices
-- Predictable and safe
+# Quick library overview
+cargo run --example quick_test
 
----
+# Production batch processing
+cargo run --example comprehensive
 
-**Clean, simple, and safe to use! 🚀**
+# Database integration
+cargo run --example backend_compatibility
+```

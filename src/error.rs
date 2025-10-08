@@ -82,24 +82,26 @@ impl PoolError {
     /// Determine if an error is retryable
     const fn is_retryable(error: &PoolsDataError) -> bool {
         match error {
-            PoolsDataError::NetworkError { .. } => true,
+            // Retryable errors - temporary issues that might succeed on retry
+            PoolsDataError::NetworkError { .. } 
+            | PoolsDataError::RateLimitExceeded { .. } 
+            | PoolsDataError::RequestTimeout { .. } 
+            | PoolsDataError::InternalError { .. } => true,
+            
+            // Non-retryable errors - permanent issues that won't be fixed by retrying
+            PoolsDataError::ParseError { .. } 
+            | PoolsDataError::ConfigurationError { .. } 
+            | PoolsDataError::PoolNotFound { .. } 
+            | PoolsDataError::InvalidStakeData { .. } 
+            | PoolsDataError::BatchOperationFailed { .. } => false,
+            
+            // RPC errors - depends on specific error code
             PoolsDataError::RpcError { code, .. } => {
-                // Some RPC errors are retryable
                 match code {
-                    -32602 => false, // Invalid params - don't retry
-                    -32601 => false, // Method not found - don't retry
-                    -32603 => true,  // Internal error - might work on retry
-                    _ => true,       // Other RPC errors may be temporary
+                    -32602 | -32601 => false, // Invalid params/method - don't retry
+                    _ => true,                 // Other RPC errors may be temporary
                 }
             }
-            PoolsDataError::ParseError { .. } => false,      // Parse errors don't fix themselves
-            PoolsDataError::RateLimitExceeded { .. } => true, // Rate limits are temporary
-            PoolsDataError::RequestTimeout { .. } => true,   // Timeouts might work on retry
-            PoolsDataError::ConfigurationError { .. } => false, // Config errors need fixing
-            PoolsDataError::PoolNotFound { .. } => false,    // Pool doesn't exist
-            PoolsDataError::InvalidStakeData { .. } => false, // Data structure issues
-            PoolsDataError::BatchOperationFailed { .. } => false, // Aggregate error
-            PoolsDataError::InternalError { .. } => true,    // Internal errors may be temporary
         }
     }
 }
