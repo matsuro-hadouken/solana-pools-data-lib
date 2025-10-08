@@ -11,7 +11,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     let test_pools = ["jito", "marinade"];
     
-    println!("🔍 Testing with pools: {:?}\n", test_pools);
+    println!("🔍 Testing with pools: {test_pools:?}\n");
     
     // Production format - clean and safe
     println!("📊 1. PRODUCTION FORMAT (Clean data for databases/APIs)");
@@ -21,13 +21,13 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             println!("✅ Success! Size: {} bytes", json.len());
             
             if let Some((name, pool_data)) = production_data.iter().next() {
-                println!("   Pool: {}", name);
+                println!("   Pool: {name}");
                 println!("   Authority: {}", pool_data.authority);
                 println!("   Accounts: {}", pool_data.stake_accounts.len());
                 println!("   Validators: {}", pool_data.validator_distribution.len());
             }
         }
-        Err(e) => println!("❌ Error: {}", e),
+        Err(e) => println!("❌ Error: {e}"),
     }
     
     println!();
@@ -42,7 +42,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             println!("   Failed: {}", debug_result.failed.len());
             
             if let Some((name, pool_data)) = debug_result.successful.iter().next() {
-                println!("   Pool: {}", name);
+                println!("   Pool: {name}");
                 println!("   Authority: {}", pool_data.authority);
                 println!("   Accounts: {}", pool_data.stake_accounts.len());
                 
@@ -52,7 +52,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Err(e) => println!("❌ Error: {}", e),
+        Err(e) => println!("❌ Error: {e}"),
     }
 
     println!("\n✅ Clean and simple - no confusing warnings or complex choices!");

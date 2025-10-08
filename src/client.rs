@@ -10,7 +10,7 @@ use crate::config::{ClientConfig, PoolsDataClientBuilder};
 use crate::error::{PoolsDataError, PoolError, Result};
 use crate::pools::{get_all_pools, get_pools_by_names, PoolInfo};
 use crate::rpc::RpcClient;
-use crate::types::*;
+use crate::types::{FieldAnalysis, PoolData, PoolStatistics, PoolsDataResult, ProductionPoolData, StakeAccountInfo, ValidatorStake};
 
 /// Main client for fetching Solana pools data
 pub struct PoolsDataClient {
@@ -21,11 +21,16 @@ pub struct PoolsDataClient {
 
 impl PoolsDataClient {
     /// Create a new client builder
+    #[must_use]
     pub fn builder() -> PoolsDataClientBuilder {
         PoolsDataClientBuilder::new()
     }
 
     /// Create a new client from configuration
+    /// 
+    /// # Errors
+    /// 
+    /// Returns error if the configuration is invalid or if system resources cannot be allocated.
     pub fn from_config(config: ClientConfig) -> Result<Self> {
         let semaphore = Arc::new(Semaphore::new(config.max_concurrent));
         let rpc_client = RpcClient::new(config.rpc_url.clone(), config.timeout);
@@ -38,16 +43,22 @@ impl PoolsDataClient {
     }
 
     /// Get list of all available pools
+    #[must_use]
     pub fn list_available_pools() -> Vec<PoolInfo> {
         get_all_pools().to_vec()
     }
 
     /// Get static field analysis
+    #[must_use]
     pub fn get_static_field_analysis() -> FieldAnalysis {
         FieldAnalysis::new()
     }
 
     /// Test RPC connection
+    /// 
+    /// # Errors
+    /// 
+    /// Returns error if the RPC endpoint is unreachable or returns invalid responses.
     pub async fn test_connection(&self) -> Result<()> {
         self.rpc_client.test_connection().await
     }
@@ -56,6 +67,13 @@ impl PoolsDataClient {
     /// 
     /// Returns clean data with static/redundant fields removed.
     /// Safe for databases, APIs, and production systems.
+    /// 
+    /// # Errors
+    /// 
+    /// Returns error if:
+    /// - Any requested pool is not found
+    /// - Network connection fails
+    /// - RPC endpoint returns invalid data
     pub async fn fetch_pools(&self, pool_names: &[&str]) -> Result<HashMap<String, ProductionPoolData>> {
         let debug_result = self.fetch_pools_debug(pool_names).await?;
         
@@ -69,6 +87,10 @@ impl PoolsDataClient {
     }
 
     /// Fetch data for all available pools
+    /// 
+    /// # Errors
+    /// 
+    /// Returns error if any pool fails to fetch or if network issues occur.
     pub async fn fetch_all_pools(&self) -> Result<HashMap<String, ProductionPoolData>> {
         let all_pools = get_all_pools();
         let pool_names: Vec<&str> = all_pools.iter().map(|p| p.name.as_str()).collect();
@@ -79,12 +101,21 @@ impl PoolsDataClient {
     ///
     /// Returns ALL fields from RPC response - use for debugging and development.
     /// Contains complete raw data including static/redundant fields.
+    /// 
+    /// # Errors
+    /// 
+    /// Returns error if all requested pools fail to fetch.
+    /// 
+    /// # Panics
+    /// 
+    /// Panics if the result contains failed pools but the failed map is unexpectedly empty.
+    /// This should never happen in normal operation.
     pub async fn fetch_pools_debug(&self, pool_names: &[&str]) -> Result<PoolsDataResult> {
         let pools_to_fetch = get_pools_by_names(pool_names);
         
         if pools_to_fetch.is_empty() {
             return Err(PoolsDataError::PoolNotFound {
-                pool_name: format!("None of the requested pools found: {:?}", pool_names),
+                pool_name: format!("None of the requested pools found: {pool_names:?}"),
             });
         }
 
@@ -121,7 +152,7 @@ impl PoolsDataClient {
                             "unknown".to_string(),
                             "unknown".to_string(),
                             PoolsDataError::InternalError {
-                                message: format!("Task failed: {}", join_error),
+                                message: format!("Task failed: {join_error}"),
                             },
                             0,
                         ),
@@ -156,7 +187,7 @@ impl PoolsDataClient {
                 pool_info.name.clone(),
                 pool_info.authority.clone(),
                 PoolsDataError::InternalError {
-                    message: format!("Failed to acquire semaphore: {}", e),
+                    message: format!("Failed to acquire semaphore: {e}"),
                 },
                 0,
             )
@@ -164,6 +195,7 @@ impl PoolsDataClient {
 
         log::debug!("Fetching pool: {}", pool_info.name);
 
+        #[allow(clippy::cast_possible_truncation)] // Duration as_millis() to u64 is intentional for retry delays
         let retry_strategy = ExponentialBackoff::from_millis(retry_base_delay.as_millis() as u64)
             .max_delay(std::time::Duration::from_secs(30))
             .take(retry_attempts as usize);

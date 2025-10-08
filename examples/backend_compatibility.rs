@@ -17,7 +17,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             
             // Show consistent schema
             for (pool_name, pool_data) in &production_data {
-                println!("\nPool: {}", pool_name);
+                println!("\nPool: {pool_name}");
                 println!("├─ Authority: {}", pool_data.authority);
                 println!("├─ Total Accounts: {}", pool_data.stake_accounts.len());
                 println!("├─ Total Lamports: {}", pool_data.statistics.total_lamports);
@@ -48,7 +48,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             println!("\n💾 JSON Size: {} bytes", json.len());
             println!("✅ Safe to store in database - consistent schema every time!");
         }
-        Err(e) => println!("❌ Error: {}", e),
+        Err(e) => println!("❌ Error: {e}"),
     }
     
     Ok(())

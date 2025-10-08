@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::Duration;
 use crate::error::{PoolsDataError, Result};
-use crate::types::*;
+use crate::types::{StakeAccountInfo, StakeAuthorized, StakeDelegation, StakeLockup};
 
 /// RPC request structure
 #[derive(Debug, Serialize)]
@@ -227,7 +227,7 @@ impl RpcClient {
         // Try to parse as RPC response
         let rpc_response: RpcResponse<Vec<RawStakeAccount>> = serde_json::from_str(&response_text)
             .map_err(|e| PoolsDataError::ParseError {
-                message: format!("Failed to parse RPC response: {}", e),
+                message: format!("Failed to parse RPC response: {e}"),
             })?;
 
         // Validate RPC response format
@@ -237,7 +237,7 @@ impl RpcClient {
         if let Some(error) = rpc_response.error {
             // Validate the error structure before using it
             if let Err(validation_error) = self.validate_rpc_error(&error) {
-                eprintln!("Warning: RPC error validation failed: {}", validation_error);
+                eprintln!("Warning: RPC error validation failed: {validation_error}");
             }
             
             return Err(PoolsDataError::RpcError {
@@ -276,7 +276,7 @@ impl RpcClient {
         let rent_exempt_reserve = raw.account.data.parsed.info.meta.rent_exempt_reserve
             .parse::<u64>()
             .map_err(|e| PoolsDataError::InvalidStakeData {
-                message: format!("Invalid rent exempt reserve: {}", e),
+                message: format!("Invalid rent exempt reserve: {e}"),
             })?;
 
         let authorized = StakeAuthorized {
@@ -287,6 +287,7 @@ impl RpcClient {
         let lockup = StakeLockup {
             custodian: raw.account.data.parsed.info.meta.lockup.custodian,
             epoch: raw.account.data.parsed.info.meta.lockup.epoch,
+            #[allow(clippy::cast_possible_wrap)] // Unix timestamps are typically positive and fit in i64
             unix_timestamp: raw.account.data.parsed.info.meta.lockup.unix_timestamp as i64,
         };
 
@@ -351,19 +352,19 @@ impl RpcClient {
         let stake = raw.delegation.stake
             .parse::<u64>()
             .map_err(|e| PoolsDataError::InvalidStakeData {
-                message: format!("Invalid stake amount: {}", e),
+                message: format!("Invalid stake amount: {e}"),
             })?;
 
         let activation_epoch = raw.delegation.activation_epoch
             .parse::<u64>()
             .map_err(|e| PoolsDataError::InvalidStakeData {
-                message: format!("Invalid activation epoch: {}", e),
+                message: format!("Invalid activation epoch: {e}"),
             })?;
 
         let deactivation_epoch = raw.delegation.deactivation_epoch
             .parse::<u64>()
             .map_err(|e| PoolsDataError::InvalidStakeData {
-                message: format!("Invalid deactivation epoch: {}", e),
+                message: format!("Invalid deactivation epoch: {e}"),
             })?;
 
         Ok(StakeDelegation {
@@ -400,7 +401,7 @@ impl RpcClient {
         if let Some(error) = rpc_response.error {
             // Validate the error structure before using it
             if let Err(validation_error) = self.validate_rpc_error(&error) {
-                eprintln!("Warning: RPC error validation failed: {}", validation_error);
+                eprintln!("Warning: RPC error validation failed: {validation_error}");
             }
             
             return Err(PoolsDataError::RpcError {

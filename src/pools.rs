@@ -16,7 +16,7 @@ pub struct PoolInfo {
 }
 
 impl PoolInfo {
-    /// Create a new PoolInfo
+    /// Create a new `PoolInfo`
     pub fn new(name: impl Into<String>, authority: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -81,7 +81,7 @@ static POOLS_BY_AUTHORITY: Lazy<HashMap<String, PoolInfo>> = Lazy::new(|| {
 });
 
 /// Get all available pools
-pub fn get_all_pools() -> &'static [PoolInfo] {
+#[must_use] pub fn get_all_pools() -> &'static [PoolInfo] {
     &POOLS_REGISTRY
 }
 
@@ -96,7 +96,7 @@ pub fn get_pool_by_authority(authority: &str) -> Option<&PoolInfo> {
 }
 
 /// Get multiple pools by names
-pub fn get_pools_by_names(names: &[&str]) -> Vec<PoolInfo> {
+#[must_use] pub fn get_pools_by_names(names: &[&str]) -> Vec<PoolInfo> {
     names
         .iter()
         .filter_map(|name| get_pool_by_name(name))

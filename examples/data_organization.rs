@@ -23,7 +23,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     
     println!("\nDynamic fields kept in both formats:");
     for field in &analysis.dynamic_fields {
-        println!("   • {}", field);
+        println!("   • {field}");
     }
     
     println!("\n💾 Size Benefits:");
@@ -34,7 +34,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     match client.fetch_pools(&["jito"]).await {
         Ok(production_data) => {
             if let Some((name, pool)) = production_data.iter().next() {
-                println!("\n🏗️  Production Data Structure for '{}':", name);
+                println!("\n🏗️  Production Data Structure for '{name}':");
                 println!("Pool {{");
                 println!("  pool_name: \"{}\"", pool.pool_name);
                 println!("  authority: \"{}\"", pool.authority);
@@ -46,7 +46,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 println!("}}");
             }
         }
-        Err(e) => println!("❌ Error: {}", e),
+        Err(e) => println!("❌ Error: {e}"),
     }
     
     println!("\n✅ Simple, clean, and predictable data structures!");

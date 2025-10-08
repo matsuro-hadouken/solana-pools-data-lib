@@ -68,7 +68,7 @@ pub struct PoolError {
 
 impl PoolError {
     /// Create a new pool error
-    pub fn new(pool_name: String, authority: String, error: PoolsDataError, attempts: u32) -> Self {
+    #[must_use] pub const fn new(pool_name: String, authority: String, error: PoolsDataError, attempts: u32) -> Self {
         let retryable = Self::is_retryable(&error);
         Self {
             pool_name,
@@ -80,7 +80,7 @@ impl PoolError {
     }
 
     /// Determine if an error is retryable
-    fn is_retryable(error: &PoolsDataError) -> bool {
+    const fn is_retryable(error: &PoolsDataError) -> bool {
         match error {
             PoolsDataError::NetworkError { .. } => true,
             PoolsDataError::RpcError { code, .. } => {
@@ -134,7 +134,7 @@ impl From<serde_json::Error> for PoolsDataError {
 // Note: Governor's NotUntil type is complex and version-dependent
 // We'll handle rate limiting errors manually in the client code instead
 
-/// Result type for operations that might fail with PoolsDataError
+/// Result type for operations that might fail with `PoolsDataError`
 pub type Result<T> = std::result::Result<T, PoolsDataError>;
 
 #[cfg(test)]

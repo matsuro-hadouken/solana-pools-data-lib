@@ -7,7 +7,7 @@ use std::time::Duration;
 use governor::{Quota, RateLimiter};
 use crate::error::{PoolsDataError, Result};
 
-/// Configuration builder for PoolsDataClient
+/// Configuration builder for `PoolsDataClient`
 #[derive(Debug, Clone)]
 pub struct PoolsDataClientBuilder {
     rate_limit: Option<u32>,
@@ -31,48 +31,56 @@ impl Default for PoolsDataClientBuilder {
 
 impl PoolsDataClientBuilder {
     /// Create a new builder with default settings optimized for public RPC
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Set rate limit in requests per second
-    pub fn rate_limit(mut self, requests_per_second: u32) -> Self {
+    #[must_use]
+    pub const fn rate_limit(mut self, requests_per_second: u32) -> Self {
         self.rate_limit = Some(requests_per_second);
         self
     }
 
-    /// Disable rate limiting entirely
-    pub fn no_rate_limit(mut self) -> Self {
+    /// Remove rate limiting
+    #[must_use]
+    pub const fn no_rate_limit(mut self) -> Self {
         self.rate_limit = None;
         self
     }
 
-    /// Set number of retry attempts for failed requests
-    pub fn retry_attempts(mut self, attempts: u32) -> Self {
+    /// Set retry attempts
+    #[must_use]
+    pub const fn retry_attempts(mut self, attempts: u32) -> Self {
         self.retry_attempts = attempts;
         self
     }
 
-    /// Set base delay for exponential backoff retries (in milliseconds)
-    pub fn retry_base_delay(mut self, delay_ms: u64) -> Self {
+    /// Set retry base delay
+    #[must_use]
+    pub const fn retry_base_delay(mut self, delay_ms: u64) -> Self {
         self.retry_base_delay_ms = delay_ms;
         self
     }
 
-    /// Set request timeout in seconds
-    pub fn timeout(mut self, seconds: u64) -> Self {
+    /// Set timeout
+    #[must_use]
+    pub const fn timeout(mut self, seconds: u64) -> Self {
         self.timeout_secs = seconds;
         self
     }
 
     /// Set maximum concurrent requests
-    pub fn max_concurrent_requests(mut self, max: usize) -> Self {
+    #[must_use]
+    pub const fn max_concurrent_requests(mut self, max: usize) -> Self {
         self.max_concurrent = max;
         self
     }
 
-    /// Use preset configuration for public RPC endpoints
-    pub fn public_rpc_config(mut self) -> Self {
+    /// Apply public RPC configuration
+    #[must_use]
+    pub const fn public_rpc_config(mut self) -> Self {
         self.rate_limit = Some(DefaultConfig::RATE_LIMIT_PER_SECOND);
         self.retry_attempts = DefaultConfig::RETRY_ATTEMPTS;
         self.retry_base_delay_ms = DefaultConfig::RETRY_BASE_DELAY_MS;
@@ -82,7 +90,8 @@ impl PoolsDataClientBuilder {
     }
 
     /// Use preset configuration for private/premium RPC endpoints
-    pub fn private_rpc_config(mut self) -> Self {
+    #[must_use]
+    pub const fn private_rpc_config(mut self) -> Self {
         self.rate_limit = Some(PrivateRpcConfig::RATE_LIMIT_PER_SECOND);
         self.retry_attempts = PrivateRpcConfig::RETRY_ATTEMPTS;
         self.retry_base_delay_ms = PrivateRpcConfig::RETRY_BASE_DELAY_MS;
@@ -92,6 +101,13 @@ impl PoolsDataClientBuilder {
     }
 
     /// Build the configuration
+    /// 
+    /// # Errors
+    /// 
+    /// Returns error if configuration values are invalid:
+    /// - Invalid RPC URL format
+    /// - Timeout is 0 or greater than 300 seconds
+    /// - Max concurrent requests is 0 or greater than 100
     pub fn build(self, rpc_url: &str) -> Result<ClientConfig> {
         if self.retry_attempts > 10 {
             return Err(PoolsDataError::ConfigurationError {

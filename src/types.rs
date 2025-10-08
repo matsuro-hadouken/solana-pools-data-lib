@@ -5,7 +5,8 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use crate::error::PoolError;
 
-/// Complete result from fetching multiple pools (debug format)
+/// Complete result from fetching multiple pools (debu    pub deactivation_epoch: u64,
+    /// Epoch when stake will deactivate (`u64::MAX` if not deactivating)format)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PoolsDataResult {
     /// Successfully fetched pool data
@@ -26,7 +27,7 @@ impl Default for PoolsDataResult {
 
 impl PoolsDataResult {
     /// Create a new result
-    pub fn new() -> Self {
+    #[must_use] pub fn new() -> Self {
         Self {
             successful: HashMap::new(),
             failed: HashMap::new(),
@@ -36,21 +37,23 @@ impl PoolsDataResult {
     }
 
     /// Check if any pools were fetched successfully
-    pub fn has_successful(&self) -> bool {
+    #[must_use] pub fn has_successful(&self) -> bool {
         !self.successful.is_empty()
     }
 
     /// Check if any pools failed
-    pub fn has_failures(&self) -> bool {
+    #[must_use] pub fn has_failures(&self) -> bool {
         !self.failed.is_empty()
     }
 
     /// Get total number of pools attempted
-    pub fn total_attempted(&self) -> usize {
+    #[must_use] pub fn total_attempted(&self) -> usize {
         self.successful.len() + self.failed.len()
     }
 
     /// Get success rate as percentage
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)] // Expected: usize counts converted to f64 for percentage calculation
     pub fn success_rate(&self) -> f64 {
         if self.total_attempted() == 0 {
             return 0.0;
@@ -59,7 +62,7 @@ impl PoolsDataResult {
     }
 
     /// Get list of pool names that can be retried
-    pub fn retryable_pools(&self) -> Vec<String> {
+    #[must_use] pub fn retryable_pools(&self) -> Vec<String> {
         self.failed
             .iter()
             .filter(|(_, error)| error.retryable)
@@ -87,7 +90,7 @@ pub struct PoolData {
 
 impl PoolData {
     /// Create new pool data
-    pub fn new(pool_name: String, authority: String) -> Self {
+    #[must_use] pub fn new(pool_name: String, authority: String) -> Self {
         Self {
             pool_name,
             authority,
@@ -99,12 +102,12 @@ impl PoolData {
     }
 
     /// Get total lamports across all accounts
-    pub fn total_lamports(&self) -> u64 {
+    #[must_use] pub fn total_lamports(&self) -> u64 {
         self.stake_accounts.iter().map(|a| a.lamports).sum()
     }
 
     /// Get total delegated stake
-    pub fn total_delegated_stake(&self) -> u64 {
+    #[must_use] pub fn total_delegated_stake(&self) -> u64 {
         self.stake_accounts
             .iter()
             .filter_map(|a| a.delegation.as_ref().map(|d| d.stake))
@@ -112,7 +115,7 @@ impl PoolData {
     }
 
     /// Get number of validators this pool delegates to
-    pub fn validator_count(&self) -> usize {
+    #[must_use] pub fn validator_count(&self) -> usize {
         self.validator_distribution.len()
     }
 }
@@ -304,7 +307,7 @@ pub struct ValidatorStake {
 
 impl ValidatorStake {
     /// Create new validator stake entry
-    pub fn new() -> Self {
+    #[must_use] pub const fn new() -> Self {
         Self {
             total_delegated: 0,
             account_count: 0,
@@ -320,7 +323,7 @@ impl ValidatorStake {
     }
 
     /// Get average stake per account
-    pub fn average_stake_per_account(&self) -> u64 {
+    #[must_use] pub const fn average_stake_per_account(&self) -> u64 {
         if self.account_count == 0 {
             0
         } else {
@@ -381,7 +384,7 @@ pub struct FieldAnalysis {
 }
 
 impl FieldAnalysis {
-    pub fn new() -> Self {
+    #[must_use] pub fn new() -> Self {
         Self {
             static_fields: vec![
                 StaticField {
