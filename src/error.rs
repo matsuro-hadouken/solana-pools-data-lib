@@ -38,6 +38,9 @@ pub enum PoolsDataError {
     #[error("Pool '{pool_name}' not found in available pools")]
     PoolNotFound { pool_name: String },
 
+    #[error("No stake accounts found for pool '{pool_name}'")]
+    NoStakeAccounts { pool_name: String },
+
     /// Invalid stake account data structure
     #[error("Invalid stake account data: {message}")]
     InvalidStakeData { message: String },
@@ -92,6 +95,7 @@ impl PoolError {
             PoolsDataError::ParseError { .. } 
             | PoolsDataError::ConfigurationError { .. } 
             | PoolsDataError::PoolNotFound { .. } 
+            | PoolsDataError::NoStakeAccounts { .. }
             | PoolsDataError::InvalidStakeData { .. } 
             | PoolsDataError::BatchOperationFailed { .. } => false,
             
