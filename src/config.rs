@@ -3,9 +3,9 @@
 //! This module provides flexible configuration options for different RPC providers
 //! and use cases, from conservative public RPC settings to high-performance private RPC.
 
-use std::time::Duration;
-use governor::{Quota, RateLimiter};
 use crate::error::{PoolsDataError, Result};
+use governor::{Quota, RateLimiter};
+use std::time::Duration;
 
 /// Configuration builder for `PoolsDataClient`
 #[derive(Debug, Clone)]
@@ -101,9 +101,9 @@ impl PoolsDataClientBuilder {
     }
 
     /// Build the configuration
-    /// 
+    ///
     /// # Errors
-    /// 
+    ///
     /// Returns error if configuration values are invalid:
     /// - Invalid RPC URL format
     /// - Timeout is 0 or greater than 300 seconds
@@ -130,14 +130,17 @@ impl PoolsDataClientBuilder {
         let rate_limiter = if let Some(rps) = self.rate_limit {
             if rps == 0 || rps > 1000 {
                 return Err(PoolsDataError::ConfigurationError {
-                    message: "Rate limit must be between 1 and 1000 requests per second".to_string(),
+                    message: "Rate limit must be between 1 and 1000 requests per second"
+                        .to_string(),
                 });
             }
             match std::num::NonZeroU32::new(rps) {
                 Some(nonzero_rps) => Some(RateLimiter::direct(Quota::per_second(nonzero_rps))),
-                None => return Err(PoolsDataError::ConfigurationError {
-                    message: "Rate limit must be greater than 0".to_string(),
-                }),
+                None => {
+                    return Err(PoolsDataError::ConfigurationError {
+                        message: "Rate limit must be greater than 0".to_string(),
+                    })
+                }
             }
         } else {
             None
@@ -158,7 +161,13 @@ impl PoolsDataClientBuilder {
 #[derive(Debug)]
 pub struct ClientConfig {
     pub rpc_url: String,
-    pub rate_limiter: Option<RateLimiter<governor::state::direct::NotKeyed, governor::state::InMemoryState, governor::clock::DefaultClock>>,
+    pub rate_limiter: Option<
+        RateLimiter<
+            governor::state::direct::NotKeyed,
+            governor::state::InMemoryState,
+            governor::clock::DefaultClock,
+        >,
+    >,
     pub retry_attempts: u32,
     pub retry_base_delay: Duration,
     pub timeout: Duration,
@@ -171,16 +180,16 @@ pub struct DefaultConfig;
 impl DefaultConfig {
     /// Conservative rate limit safe for public RPC endpoints
     pub const RATE_LIMIT_PER_SECOND: u32 = 2;
-    
+
     /// Maximum concurrent requests to avoid overwhelming public RPC
     pub const MAX_CONCURRENT_REQUESTS: usize = 3;
-    
+
     /// Number of retry attempts for failed requests
     pub const RETRY_ATTEMPTS: u32 = 3;
-    
+
     /// Base delay for exponential backoff (200ms, 400ms, 800ms)
     pub const RETRY_BASE_DELAY_MS: u64 = 200;
-    
+
     /// Request timeout - getProgramAccounts can be slow
     pub const REQUEST_TIMEOUT_SECS: u64 = 30;
 }
@@ -191,16 +200,16 @@ pub struct PrivateRpcConfig;
 impl PrivateRpcConfig {
     /// Higher rate limit for private RPC
     pub const RATE_LIMIT_PER_SECOND: u32 = 50;
-    
+
     /// More concurrent requests for private RPC
     pub const MAX_CONCURRENT_REQUESTS: usize = 10;
-    
+
     /// Fewer retries needed with reliable private RPC
     pub const RETRY_ATTEMPTS: u32 = 2;
-    
+
     /// Faster retry with reliable private RPC
     pub const RETRY_BASE_DELAY_MS: u64 = 100;
-    
+
     /// Shorter timeout with fast private RPC
     pub const REQUEST_TIMEOUT_SECS: u64 = 15;
 }
@@ -223,18 +232,21 @@ mod tests {
     fn test_default_config() {
         let builder = PoolsDataClientBuilder::new();
         let config = builder.build("https://test.com").unwrap();
-        
+
         assert_eq!(config.rpc_url, "https://test.com");
         assert!(config.rate_limiter.is_some());
         assert_eq!(config.retry_attempts, DefaultConfig::RETRY_ATTEMPTS);
-        assert_eq!(config.max_concurrent, DefaultConfig::MAX_CONCURRENT_REQUESTS);
+        assert_eq!(
+            config.max_concurrent,
+            DefaultConfig::MAX_CONCURRENT_REQUESTS
+        );
     }
 
     #[test]
     fn test_no_rate_limit() {
         let builder = PoolsDataClientBuilder::new().no_rate_limit();
         let config = builder.build("https://test.com").unwrap();
-        
+
         assert!(config.rate_limiter.is_none());
     }
 
@@ -243,7 +255,7 @@ mod tests {
         let result = PoolsDataClientBuilder::new()
             .retry_attempts(20)
             .build("https://test.com");
-        
+
         assert!(result.is_err());
     }
 
@@ -251,8 +263,11 @@ mod tests {
     fn test_private_rpc_config() {
         let builder = PoolsDataClientBuilder::new().private_rpc_config();
         let config = builder.build("https://private-rpc.com").unwrap();
-        
-        assert_eq!(config.max_concurrent, PrivateRpcConfig::MAX_CONCURRENT_REQUESTS);
+
+        assert_eq!(
+            config.max_concurrent,
+            PrivateRpcConfig::MAX_CONCURRENT_REQUESTS
+        );
         assert_eq!(config.retry_attempts, PrivateRpcConfig::RETRY_ATTEMPTS);
     }
 }

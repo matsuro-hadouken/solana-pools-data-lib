@@ -11,6 +11,13 @@ documentation = "https://docs.rs/solana-pools-data-lib"
 keywords = ["solana", "blockchain", "stake-pools", "rpc", "defi"]
 categories = ["api-bindings", "cryptocurrency", "asynchronous"]
 readme = "README.md"
+rust-version = "1.70"
+exclude = ["target/", ".git/", ".github/"]
+
+[features]
+default = []
+# Enable additional logging and debug features
+debug = ["log/max_level_debug"]
 
 [lib]
 name = "solana_pools_data_lib"

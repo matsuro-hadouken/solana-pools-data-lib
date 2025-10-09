@@ -1,7 +1,7 @@
 //! # Pools Data Library
 //!
 //! A clean, simple Rust library for fetching Solana stake pool data.
-//! 
+//!
 //! ## Two Output Formats
 //!
 //! - **Production**: Clean data with static fields removed (safe for databases)
@@ -32,16 +32,16 @@
 mod client;
 mod config;
 mod error;
-mod types;
 mod pools;
 mod rpc;
+mod types;
 
 pub use client::*;
 pub use config::*;
 pub use error::*;
-pub use types::*;
 pub use pools::*;
+pub use types::*;
 
 // Re-export commonly used types
-pub use tokio;
 pub use serde_json;
+pub use tokio;

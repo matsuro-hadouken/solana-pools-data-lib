@@ -1,6 +1,6 @@
 # Examples
 
-## Basic Usage
+## Available Examples
 
 ### `quick_test.rs`
 Library overview and quick test:
@@ -9,13 +9,13 @@ cargo run --example quick_test
 ```
 
 ### `basic.rs`
-Configuration examples showing rate limiting, timeouts, and 8-second delays:
+Configuration examples showing rate limiting, timeouts, and operational delays:
 ```bash
 cargo run --example basic
 ```
 
 ### `comprehensive.rs`
-Fetch all 32 supported pools:
+Fetch all supported pools:
 ```bash
 cargo run --example comprehensive
 ```
@@ -29,39 +29,7 @@ cargo run --example comprehensive
 - `retry_base_delay(ms)` - Delay between retries
 - `max_concurrent_requests(n)` - Parallel request limit
 
-Use 8-second delays between operations for optimal performance.
-
-### `quick_test.rs`
-Fast library overview - get familiar with available pools:
-```bash
-cargo run --example quick_test
-```
-
-## Specialized Examples
-
-### `format_comparison.rs`
-Compare production vs debug output formats:
-```bash
-cargo run --example format_comparison
-```
-
-### `data_samples.rs`
-Educational examples showing pool data structure:
-```bash
-cargo run --example data_samples
-```
-
-### `backend_compatibility.rs`
-Database integration patterns and serialization:
-```bash
-cargo run --example backend_compatibility
-```
-
-### `delegation_states.rs`
-Explains why some pools show `null` delegation accounts:
-```bash
-cargo run --example delegation_states
-```
+Use appropriate delays between operations for optimal performance.
 
 ## **COMPLETE CONFIGURATION REFERENCE**
 
@@ -168,48 +136,24 @@ for pool_name in pool_list {
 }
 ```
 
-### **Why This Configuration Works:**
+### **Configuration Rationale:**
 - **Fresh client per pool** - Eliminates RPC session throttling
 - **8-second delays** - Prevents rate limiting completely  
 - **3-second timeout** - Fast failure detection (calls are 0.2-0.5s)
 - **3 retry attempts** - Handles temporary network issues
 - **Exponential backoff** - Smart retry strategy
-- **100% success rate** - Tested extensively
+- **High success rate** - Tested extensively
 
-## Which Example Should I Run?
+## Example Selection Guide
 
-### **"I need to understand all configuration options"**
-→ `cargo run --example basic` ⭐ **ESSENTIAL**
+### **For comprehensive configuration options**
+→ `cargo run --example basic` - Essential configuration reference
 
-### **"I need comprehensive pool analysis"**
+### **For complete pool analysis**
 → `cargo run --example comprehensive`
 
-### **"I'm new to this library"**
+### **For library overview**
 → `cargo run --example quick_test`
-
-### **"I want to understand the data structure"**  
-→ `cargo run --example data_samples`  
-→ `cargo run --example format_comparison`
-
-### **"I'm seeing 'delegation: null' errors"**
-→ `cargo run --example delegation_states`
-
-### **"I need database integration"**
-→ `cargo run --example backend_compatibility`
-
-## Available Pool Names
-
-The library supports 32 verified Solana stake pools:
-```
-foundation, firedancer_delegation, double_zero, jpool, raydium,
-jito, marinade, marinade_native, marinade_native_2, socean,
-lido, eversol, edgevana, blazestake, daopool, bonk, sanctum,
-sanctum_2, binance, jupiter, binance_2, solayer, bybit,
-shinobi, helius, marginfi, vault, drift, aerosol, ftx,
-juicy, picosol
-```
-
-**Major pools for dashboards**: `jito`, `marinade`, `blazestake`, `jupiter`, `lido`, `sanctum`
 
 ## Running Examples
 
@@ -223,11 +167,11 @@ Replace `<example_name>` with any filename (without `.rs` extension).
 ## Production Ready
 
 All examples demonstrate:
-- **Complete configuration coverage**
-- **Professional output formatting**
-- **Proven optimal settings**
-- **Comprehensive error handling**
-- **Real Solana mainnet data**
-- **Detailed documentation**
+- Complete configuration coverage
+- Professional output formatting
+- Optimal settings
+- Comprehensive error handling
+- Real Solana mainnet data
+- Detailed documentation
 
-Perfect for building reliable Solana pool applications!
+Suitable for building reliable Solana pool applications.

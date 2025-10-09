@@ -3,11 +3,11 @@
 //! This module handles the low-level RPC communication with Solana nodes,
 //! including request formatting, response parsing, and error handling.
 
+use crate::error::{PoolsDataError, Result};
+use crate::types::{StakeAccountInfo, StakeAuthorized, StakeDelegation, StakeLockup};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::Duration;
-use crate::error::{PoolsDataError, Result};
-use crate::types::{StakeAccountInfo, StakeAuthorized, StakeDelegation, StakeLockup};
 
 /// RPC request structure
 #[derive(Debug, Serialize)]
@@ -53,8 +53,8 @@ impl RpcRequest {
 /// RPC response structure
 #[derive(Debug, Deserialize)]
 struct RpcResponse<T> {
-    jsonrpc: String,  // Used for validation
-    id: u64,          // Used for request/response matching
+    jsonrpc: String, // Used for validation
+    id: u64,         // Used for request/response matching
     result: Option<T>,
     error: Option<RpcError>,
 }
@@ -197,11 +197,15 @@ impl RpcClient {
 
     /// Get next request ID
     fn next_request_id(&self) -> u64 {
-        self.request_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        self.request_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Fetch stake accounts for a specific pool authority
-    pub async fn fetch_stake_accounts_for_authority(&self, authority: &str) -> Result<Vec<StakeAccountInfo>> {
+    pub async fn fetch_stake_accounts_for_authority(
+        &self,
+        authority: &str,
+    ) -> Result<Vec<StakeAccountInfo>> {
         let request_id = self.next_request_id();
         let request = RpcRequest::get_program_accounts_stake(request_id, authority);
 
@@ -231,32 +235,38 @@ impl RpcClient {
             })?;
 
         // Validate RPC response format
-        self.validate_rpc_response(&rpc_response, request_id)?;
+        Self::validate_rpc_response(&rpc_response, request_id)?;
 
         // Check for RPC errors
         if let Some(error) = rpc_response.error {
             // Validate the error structure before using it
-            if let Err(validation_error) = self.validate_rpc_error(&error) {
+            if let Err(validation_error) = Self::validate_rpc_error(&error) {
                 eprintln!("Warning: RPC error validation failed: {validation_error}");
             }
-            
+
             return Err(PoolsDataError::RpcError {
                 code: error.code,
                 message: error.message,
             });
         }
 
-        let raw_accounts = rpc_response.result.ok_or_else(|| PoolsDataError::ParseError {
-            message: "Missing result in RPC response".to_string(),
-        })?;
+        let raw_accounts = rpc_response
+            .result
+            .ok_or_else(|| PoolsDataError::ParseError {
+                message: "Missing result in RPC response".to_string(),
+            })?;
 
-        log::debug!("Received {} stake accounts for authority: {}", raw_accounts.len(), authority);
+        log::debug!(
+            "Received {} stake accounts for authority: {}",
+            raw_accounts.len(),
+            authority
+        );
 
         // Convert raw accounts to our types
         let mut stake_accounts = Vec::new();
         for raw_account in raw_accounts {
             let pubkey = raw_account.pubkey.clone(); // Clone before moving
-            match self.parse_stake_account(raw_account) {
+            match Self::parse_stake_account(raw_account) {
                 Ok(stake_account) => stake_accounts.push(stake_account),
                 Err(e) => {
                     log::warn!("Failed to parse stake account {}: {}", pubkey, e);
@@ -269,11 +279,17 @@ impl RpcClient {
     }
 
     /// Parse raw stake account data into our types
-    fn parse_stake_account(&self, raw: RawStakeAccount) -> Result<StakeAccountInfo> {
+    fn parse_stake_account(raw: RawStakeAccount) -> Result<StakeAccountInfo> {
         // Validate that this is actually a stake account
-        self.validate_stake_account(&raw)?;
+        Self::validate_stake_account(&raw)?;
 
-        let rent_exempt_reserve = raw.account.data.parsed.info.meta.rent_exempt_reserve
+        let rent_exempt_reserve = raw
+            .account
+            .data
+            .parsed
+            .info
+            .meta
+            .rent_exempt_reserve
             .parse::<u64>()
             .map_err(|e| PoolsDataError::InvalidStakeData {
                 message: format!("Invalid rent exempt reserve: {e}"),
@@ -292,7 +308,7 @@ impl RpcClient {
         };
 
         let delegation = if let Some(stake_data) = raw.account.data.parsed.info.stake {
-            Some(self.parse_delegation(stake_data)?)
+            Some(Self::parse_delegation(stake_data)?)
         } else {
             None
         };
@@ -308,7 +324,7 @@ impl RpcClient {
     }
 
     /// Validate that the raw account is a proper stake account
-    fn validate_stake_account(&self, raw: &RawStakeAccount) -> Result<()> {
+    fn validate_stake_account(raw: &RawStakeAccount) -> Result<()> {
         // Validate owner is stake program
         if raw.account.owner != "Stake11111111111111111111111111111111111111" {
             return Err(PoolsDataError::InvalidStakeData {
@@ -326,21 +342,32 @@ impl RpcClient {
         // Validate account space (stake accounts are always 200 bytes)
         if raw.account.space != 200 {
             return Err(PoolsDataError::InvalidStakeData {
-                message: format!("Invalid stake account space: {} (expected 200)", raw.account.space),
+                message: format!(
+                    "Invalid stake account space: {} (expected 200)",
+                    raw.account.space
+                ),
             });
         }
 
         // Validate program type
         if raw.account.data.program != "stake" {
             return Err(PoolsDataError::InvalidStakeData {
-                message: format!("Invalid program type: {} (expected 'stake')", raw.account.data.program),
+                message: format!(
+                    "Invalid program type: {} (expected 'stake')",
+                    raw.account.data.program
+                ),
             });
         }
 
         // Validate stake type for delegated accounts
-        if raw.account.data.parsed.info.stake.is_some() && raw.account.data.parsed.stake_type != "delegated" {
+        if raw.account.data.parsed.info.stake.is_some()
+            && raw.account.data.parsed.stake_type != "delegated"
+        {
             return Err(PoolsDataError::InvalidStakeData {
-                message: format!("Invalid stake type: {} (expected 'delegated')", raw.account.data.parsed.stake_type),
+                message: format!(
+                    "Invalid stake type: {} (expected 'delegated')",
+                    raw.account.data.parsed.stake_type
+                ),
             });
         }
 
@@ -348,20 +375,26 @@ impl RpcClient {
     }
 
     /// Parse delegation data
-    fn parse_delegation(&self, raw: RawStakeData) -> Result<StakeDelegation> {
-        let stake = raw.delegation.stake
-            .parse::<u64>()
-            .map_err(|e| PoolsDataError::InvalidStakeData {
-                message: format!("Invalid stake amount: {e}"),
-            })?;
+    fn parse_delegation(raw: RawStakeData) -> Result<StakeDelegation> {
+        let stake =
+            raw.delegation
+                .stake
+                .parse::<u64>()
+                .map_err(|e| PoolsDataError::InvalidStakeData {
+                    message: format!("Invalid stake amount: {e}"),
+                })?;
 
-        let activation_epoch = raw.delegation.activation_epoch
+        let activation_epoch = raw
+            .delegation
+            .activation_epoch
             .parse::<u64>()
             .map_err(|e| PoolsDataError::InvalidStakeData {
                 message: format!("Invalid activation epoch: {e}"),
             })?;
 
-        let deactivation_epoch = raw.delegation.deactivation_epoch
+        let deactivation_epoch = raw
+            .delegation
+            .deactivation_epoch
             .parse::<u64>()
             .map_err(|e| PoolsDataError::InvalidStakeData {
                 message: format!("Invalid deactivation epoch: {e}"),
@@ -400,10 +433,10 @@ impl RpcClient {
 
         if let Some(error) = rpc_response.error {
             // Validate the error structure before using it
-            if let Err(validation_error) = self.validate_rpc_error(&error) {
+            if let Err(validation_error) = Self::validate_rpc_error(&error) {
                 eprintln!("Warning: RPC error validation failed: {validation_error}");
             }
-            
+
             return Err(PoolsDataError::RpcError {
                 code: error.code,
                 message: error.message,
@@ -415,12 +448,15 @@ impl RpcClient {
     }
 
     /// Validate RPC response format and content
-    fn validate_rpc_response<T>(&self, response: &RpcResponse<T>, expected_id: u64) -> Result<()> {
+    fn validate_rpc_response<T>(response: &RpcResponse<T>, expected_id: u64) -> Result<()> {
         // Validate JSON-RPC version
         if response.jsonrpc != "2.0" {
             return Err(PoolsDataError::RpcError {
                 code: -32600,
-                message: format!("Invalid JSON-RPC version: {} (expected '2.0')", response.jsonrpc),
+                message: format!(
+                    "Invalid JSON-RPC version: {} (expected '2.0')",
+                    response.jsonrpc
+                ),
             });
         }
 
@@ -428,7 +464,10 @@ impl RpcClient {
         if response.id != expected_id {
             return Err(PoolsDataError::RpcError {
                 code: -32603,
-                message: format!("Response ID mismatch: {} (expected {})", response.id, expected_id),
+                message: format!(
+                    "Response ID mismatch: {} (expected {})",
+                    response.id, expected_id
+                ),
             });
         }
 
@@ -436,7 +475,7 @@ impl RpcClient {
     }
 
     /// Validate RPC error structure and content
-    fn validate_rpc_error(&self, error: &RpcError) -> Result<()> {
+    fn validate_rpc_error(error: &RpcError) -> Result<()> {
         // Validate error code is within expected ranges
         // Standard JSON-RPC error codes: -32768 to -32000 are reserved
         // Solana-specific codes are negative but outside this range
@@ -471,7 +510,7 @@ mod tests {
     #[test]
     fn test_rpc_request_creation() {
         let request = RpcRequest::get_program_accounts_stake(1, "test_authority");
-        
+
         assert_eq!(request.jsonrpc, "2.0");
         assert_eq!(request.id, 1);
         assert_eq!(request.method, "getProgramAccounts");
@@ -479,8 +518,8 @@ mod tests {
 
     #[test]
     fn test_delegation_parsing() {
-        let client = RpcClient::new("http://test".to_string(), Duration::from_secs(30));
-        
+        let _client = RpcClient::new("http://test".to_string(), Duration::from_secs(30));
+
         let raw_stake_data = RawStakeData {
             credits_observed: 1000,
             delegation: RawDelegation {
@@ -492,8 +531,8 @@ mod tests {
             },
         };
 
-        let delegation = client.parse_delegation(raw_stake_data).unwrap();
-        
+        let delegation = RpcClient::parse_delegation(raw_stake_data).unwrap();
+
         assert_eq!(delegation.voter, "validator123");
         assert_eq!(delegation.stake, 5000000000);
         assert_eq!(delegation.activation_epoch, 100);

@@ -1,12 +1,11 @@
-//! Clean data types for stake pool information.
+//! Cle/// Complete result from fetching multiple pools (debug format) data types for stake pool information.
 
+use crate::error::PoolError;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use chrono::{DateTime, Utc};
-use crate::error::PoolError;
 
-/// Complete result from fetching multiple pools (debu    pub deactivation_epoch: u64,
-    /// Epoch when stake will deactivate (`u64::MAX` if not deactivating)format)
+/// Complete result from fetching multiple pools (debug format)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PoolsDataResult {
     /// Successfully fetched pool data
@@ -27,7 +26,8 @@ impl Default for PoolsDataResult {
 
 impl PoolsDataResult {
     /// Create a new result
-    #[must_use] pub fn new() -> Self {
+    #[must_use]
+    pub fn new() -> Self {
         Self {
             successful: HashMap::new(),
             failed: HashMap::new(),
@@ -37,17 +37,20 @@ impl PoolsDataResult {
     }
 
     /// Check if any pools were fetched successfully
-    #[must_use] pub fn has_successful(&self) -> bool {
+    #[must_use]
+    pub fn has_successful(&self) -> bool {
         !self.successful.is_empty()
     }
 
     /// Check if any pools failed
-    #[must_use] pub fn has_failures(&self) -> bool {
+    #[must_use]
+    pub fn has_failures(&self) -> bool {
         !self.failed.is_empty()
     }
 
     /// Get total number of pools attempted
-    #[must_use] pub fn total_attempted(&self) -> usize {
+    #[must_use]
+    pub fn total_attempted(&self) -> usize {
         self.successful.len() + self.failed.len()
     }
 
@@ -62,7 +65,8 @@ impl PoolsDataResult {
     }
 
     /// Get list of pool names that can be retried
-    #[must_use] pub fn retryable_pools(&self) -> Vec<String> {
+    #[must_use]
+    pub fn retryable_pools(&self) -> Vec<String> {
         self.failed
             .iter()
             .filter(|(_, error)| error.retryable)
@@ -90,7 +94,8 @@ pub struct PoolData {
 
 impl PoolData {
     /// Create new pool data
-    #[must_use] pub fn new(pool_name: String, authority: String) -> Self {
+    #[must_use]
+    pub fn new(pool_name: String, authority: String) -> Self {
         Self {
             pool_name,
             authority,
@@ -102,12 +107,14 @@ impl PoolData {
     }
 
     /// Get total lamports across all accounts
-    #[must_use] pub fn total_lamports(&self) -> u64 {
+    #[must_use]
+    pub fn total_lamports(&self) -> u64 {
         self.stake_accounts.iter().map(|a| a.lamports).sum()
     }
 
     /// Get total delegated stake
-    #[must_use] pub fn total_delegated_stake(&self) -> u64 {
+    #[must_use]
+    pub fn total_delegated_stake(&self) -> u64 {
         self.stake_accounts
             .iter()
             .filter_map(|a| a.delegation.as_ref().map(|d| d.stake))
@@ -115,7 +122,8 @@ impl PoolData {
     }
 
     /// Get number of validators this pool delegates to
-    #[must_use] pub fn validator_count(&self) -> usize {
+    #[must_use]
+    pub fn validator_count(&self) -> usize {
         self.validator_distribution.len()
     }
 }
@@ -186,13 +194,16 @@ pub struct ProductionStakeAccountInfo {
 
 impl From<&StakeAccountInfo> for ProductionStakeAccountInfo {
     fn from(account: &StakeAccountInfo) -> Self {
-        let delegation = account.delegation.as_ref().map(|d| ProductionStakeDelegation {
-            validator: d.voter.clone(),
-            stake_lamports: d.stake,
-            activation_epoch: d.activation_epoch,
-            deactivation_epoch: d.deactivation_epoch,
-            credits_observed: d.credits_observed,
-        });
+        let delegation = account
+            .delegation
+            .as_ref()
+            .map(|d| ProductionStakeDelegation {
+                validator: d.voter.clone(),
+                stake_lamports: d.stake,
+                activation_epoch: d.activation_epoch,
+                deactivation_epoch: d.deactivation_epoch,
+                credits_observed: d.credits_observed,
+            });
 
         let stake_type = if account.delegation.is_some() {
             "delegated".to_string()
@@ -231,7 +242,7 @@ pub struct StakeDelegation {
     pub stake: u64,
     /// Epoch when stake became active
     pub activation_epoch: u64,
-    /// Epoch when stake will deactivate (u64::MAX if not deactivating)
+    /// Epoch when stake will deactivate (`u64::MAX` if not deactivating)
     pub deactivation_epoch: u64,
     /// Credits observed from this validator
     pub credits_observed: u64,
@@ -248,7 +259,7 @@ pub struct ProductionStakeDelegation {
     pub stake_lamports: u64,
     /// Epoch when stake became active
     pub activation_epoch: u64,
-    /// Epoch when stake will deactivate (u64::MAX if not deactivating)
+    /// Epoch when stake will deactivate (`u64::MAX` if not deactivating)
     pub deactivation_epoch: u64,
     /// Credits observed from this validator
     pub credits_observed: u64,
@@ -307,7 +318,8 @@ pub struct ValidatorStake {
 
 impl ValidatorStake {
     /// Create new validator stake entry
-    #[must_use] pub const fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             total_delegated: 0,
             account_count: 0,
@@ -323,7 +335,8 @@ impl ValidatorStake {
     }
 
     /// Get average stake per account
-    #[must_use] pub const fn average_stake_per_account(&self) -> u64 {
+    #[must_use]
+    pub const fn average_stake_per_account(&self) -> u64 {
         if self.account_count == 0 {
             0
         } else {
@@ -339,8 +352,7 @@ impl Default for ValidatorStake {
 }
 
 /// Pool statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PoolStatistics {
     /// Total number of stake accounts
     pub total_accounts: usize,
@@ -356,10 +368,8 @@ pub struct PoolStatistics {
     pub validator_count: usize,
 }
 
-
 /// Summary of pools data operation
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PoolsDataSummary {
     /// Total pools attempted to fetch
     pub total_pools_attempted: usize,
@@ -370,7 +380,6 @@ pub struct PoolsDataSummary {
     /// Total processing time in milliseconds
     pub total_processing_time_ms: u64,
 }
-
 
 /// Field analysis for understanding static vs dynamic fields
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -384,7 +393,8 @@ pub struct FieldAnalysis {
 }
 
 impl FieldAnalysis {
-    #[must_use] pub fn new() -> Self {
+    #[must_use]
+    pub fn new() -> Self {
         Self {
             static_fields: vec![
                 StaticField {

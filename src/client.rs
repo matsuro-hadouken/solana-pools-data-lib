@@ -7,10 +7,13 @@ use tokio::sync::Semaphore;
 use tokio_retry::{strategy::ExponentialBackoff, Retry};
 
 use crate::config::{ClientConfig, PoolsDataClientBuilder};
-use crate::error::{PoolsDataError, PoolError, Result};
+use crate::error::{PoolError, PoolsDataError, Result};
 use crate::pools::{get_all_pools, get_pools_by_names, PoolInfo};
 use crate::rpc::RpcClient;
-use crate::types::{FieldAnalysis, PoolData, PoolStatistics, PoolsDataResult, ProductionPoolData, StakeAccountInfo, ValidatorStake};
+use crate::types::{
+    FieldAnalysis, PoolData, PoolStatistics, PoolsDataResult, ProductionPoolData, StakeAccountInfo,
+    ValidatorStake,
+};
 
 /// Main client for fetching Solana pools data
 pub struct PoolsDataClient {
@@ -27,9 +30,9 @@ impl PoolsDataClient {
     }
 
     /// Create a new client from configuration
-    /// 
+    ///
     /// # Errors
-    /// 
+    ///
     /// Returns error if the configuration is invalid or if system resources cannot be allocated.
     pub fn from_config(config: ClientConfig) -> Result<Self> {
         let semaphore = Arc::new(Semaphore::new(config.max_concurrent));
@@ -55,41 +58,45 @@ impl PoolsDataClient {
     }
 
     /// Test RPC connection
-    /// 
+    ///
     /// # Errors
-    /// 
+    ///
     /// Returns error if the RPC endpoint is unreachable or returns invalid responses.
     pub async fn test_connection(&self) -> Result<()> {
         self.rpc_client.test_connection().await
     }
 
     /// Fetch stake pool data for production use
-    /// 
+    ///
     /// Returns clean data with static/redundant fields removed.
     /// Safe for databases, APIs, and production systems.
-    /// 
+    ///
     /// # Errors
-    /// 
+    ///
     /// Returns error if:
     /// - Any requested pool is not found
     /// - Network connection fails
     /// - RPC endpoint returns invalid data
-    pub async fn fetch_pools(&self, pool_names: &[&str]) -> Result<HashMap<String, ProductionPoolData>> {
+    pub async fn fetch_pools(
+        &self,
+        pool_names: &[&str],
+    ) -> Result<HashMap<String, ProductionPoolData>> {
         let debug_result = self.fetch_pools_debug(pool_names).await?;
-        
+
         // Convert to production format
-        let production_data: HashMap<String, ProductionPoolData> = debug_result.successful
+        let production_data: HashMap<String, ProductionPoolData> = debug_result
+            .successful
             .iter()
             .map(|(name, pool)| (name.clone(), pool.into()))
             .collect();
-            
+
         Ok(production_data)
     }
 
     /// Fetch data for all available pools
-    /// 
+    ///
     /// # Errors
-    /// 
+    ///
     /// Returns error if any pool fails to fetch or if network issues occur.
     pub async fn fetch_all_pools(&self) -> Result<HashMap<String, ProductionPoolData>> {
         let all_pools = get_all_pools();
@@ -101,18 +108,18 @@ impl PoolsDataClient {
     ///
     /// Returns ALL fields from RPC response - use for debugging and development.
     /// Contains complete raw data including static/redundant fields.
-    /// 
+    ///
     /// # Errors
-    /// 
+    ///
     /// Returns error if all requested pools fail to fetch.
-    /// 
+    ///
     /// # Panics
-    /// 
+    ///
     /// Panics if the result contains failed pools but the failed map is unexpectedly empty.
     /// This should never happen in normal operation.
     pub async fn fetch_pools_debug(&self, pool_names: &[&str]) -> Result<PoolsDataResult> {
         let pools_to_fetch = get_pools_by_names(pool_names);
-        
+
         if pools_to_fetch.is_empty() {
             return Err(PoolsDataError::PoolNotFound {
                 pool_name: format!("None of the requested pools found: {pool_names:?}"),
@@ -127,9 +134,16 @@ impl PoolsDataClient {
             let semaphore = Arc::clone(&self.semaphore);
             let retry_attempts = self.config.retry_attempts;
             let retry_base_delay = self.config.retry_base_delay;
-            
+
             let task = tokio::spawn(async move {
-                Self::fetch_single_pool_impl(rpc_client, semaphore, pool_info, retry_attempts, retry_base_delay).await
+                Self::fetch_single_pool_impl(
+                    rpc_client,
+                    semaphore,
+                    pool_info,
+                    retry_attempts,
+                    retry_base_delay,
+                )
+                .await
             });
             tasks.push(task);
         }
@@ -139,10 +153,14 @@ impl PoolsDataClient {
         for task in tasks {
             match task.await {
                 Ok(Ok(pool_data)) => {
-                    result.successful.insert(pool_data.pool_name.clone(), pool_data);
+                    result
+                        .successful
+                        .insert(pool_data.pool_name.clone(), pool_data);
                 }
                 Ok(Err(pool_error)) => {
-                    result.failed.insert(pool_error.pool_name.clone(), pool_error);
+                    result
+                        .failed
+                        .insert(pool_error.pool_name.clone(), pool_error);
                 }
                 Err(join_error) => {
                     log::error!("Task join error: {}", join_error);
@@ -195,7 +213,8 @@ impl PoolsDataClient {
 
         log::debug!("Fetching pool: {}", pool_info.name);
 
-        #[allow(clippy::cast_possible_truncation)] // Duration as_millis() to u64 is intentional for retry delays
+        #[allow(clippy::cast_possible_truncation)]
+        // Duration as_millis() to u64 is intentional for retry delays
         let retry_strategy = ExponentialBackoff::from_millis(retry_base_delay.as_millis() as u64)
             .max_delay(std::time::Duration::from_secs(30))
             .take(retry_attempts as usize);
@@ -223,7 +242,8 @@ impl PoolsDataClient {
                     ));
                 }
 
-                let validator_distribution = Self::calculate_validator_distribution(&stake_accounts);
+                let validator_distribution =
+                    Self::calculate_validator_distribution(&stake_accounts);
                 let statistics = Self::calculate_pool_statistics(&stake_accounts);
 
                 Ok(PoolData {
@@ -243,16 +263,21 @@ impl PoolsDataClient {
     }
 
     /// Calculate validator distribution from stake accounts
-    fn calculate_validator_distribution(stake_accounts: &[StakeAccountInfo]) -> HashMap<String, ValidatorStake> {
+    fn calculate_validator_distribution(
+        stake_accounts: &[StakeAccountInfo],
+    ) -> HashMap<String, ValidatorStake> {
         let mut distribution = HashMap::new();
 
         for account in stake_accounts {
             if let Some(delegation) = &account.delegation {
-                let entry = distribution.entry(delegation.voter.clone()).or_insert(ValidatorStake {
-                    total_delegated: 0,
-                    account_count: 0,
-                    accounts: Vec::new(),
-                });
+                let entry =
+                    distribution
+                        .entry(delegation.voter.clone())
+                        .or_insert(ValidatorStake {
+                            total_delegated: 0,
+                            account_count: 0,
+                            accounts: Vec::new(),
+                        });
 
                 entry.total_delegated += delegation.stake;
                 entry.account_count += 1;
@@ -274,12 +299,18 @@ impl PoolsDataClient {
 
         let active_stake_accounts = stake_accounts
             .iter()
-            .filter(|a| a.delegation.is_some() && a.delegation.as_ref().unwrap().deactivation_epoch == u64::MAX)
+            .filter(|a| {
+                a.delegation.is_some()
+                    && a.delegation.as_ref().unwrap().deactivation_epoch == u64::MAX
+            })
             .count();
 
         let deactivating_stake_accounts = stake_accounts
             .iter()
-            .filter(|a| a.delegation.is_some() && a.delegation.as_ref().unwrap().deactivation_epoch != u64::MAX)
+            .filter(|a| {
+                a.delegation.is_some()
+                    && a.delegation.as_ref().unwrap().deactivation_epoch != u64::MAX
+            })
             .count();
 
         let validator_count = stake_accounts

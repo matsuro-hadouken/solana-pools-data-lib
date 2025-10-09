@@ -3,9 +3,9 @@
 //! This module provides comprehensive error handling with specific error types
 //! for different failure scenarios, enabling developers to handle errors appropriately.
 
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use thiserror::Error;
-use serde::{Serialize, Deserialize};
 
 /// Main error type for the pools data library
 #[derive(Error, Debug, Clone, Serialize, Deserialize)]
@@ -71,7 +71,13 @@ pub struct PoolError {
 
 impl PoolError {
     /// Create a new pool error
-    #[must_use] pub const fn new(pool_name: String, authority: String, error: PoolsDataError, attempts: u32) -> Self {
+    #[must_use]
+    pub const fn new(
+        pool_name: String,
+        authority: String,
+        error: PoolsDataError,
+        attempts: u32,
+    ) -> Self {
         let retryable = Self::is_retryable(&error);
         Self {
             pool_name,
@@ -86,24 +92,24 @@ impl PoolError {
     const fn is_retryable(error: &PoolsDataError) -> bool {
         match error {
             // Retryable errors - temporary issues that might succeed on retry
-            PoolsDataError::NetworkError { .. } 
-            | PoolsDataError::RateLimitExceeded { .. } 
-            | PoolsDataError::RequestTimeout { .. } 
+            PoolsDataError::NetworkError { .. }
+            | PoolsDataError::RateLimitExceeded { .. }
+            | PoolsDataError::RequestTimeout { .. }
             | PoolsDataError::InternalError { .. } => true,
-            
+
             // Non-retryable errors - permanent issues that won't be fixed by retrying
-            PoolsDataError::ParseError { .. } 
-            | PoolsDataError::ConfigurationError { .. } 
-            | PoolsDataError::PoolNotFound { .. } 
+            PoolsDataError::ParseError { .. }
+            | PoolsDataError::ConfigurationError { .. }
+            | PoolsDataError::PoolNotFound { .. }
             | PoolsDataError::NoStakeAccounts { .. }
-            | PoolsDataError::InvalidStakeData { .. } 
+            | PoolsDataError::InvalidStakeData { .. }
             | PoolsDataError::BatchOperationFailed { .. } => false,
-            
+
             // RPC errors - depends on specific error code
             PoolsDataError::RpcError { code, .. } => {
                 match code {
                     -32602 | -32601 => false, // Invalid params/method - don't retry
-                    _ => true,                 // Other RPC errors may be temporary
+                    _ => true,                // Other RPC errors may be temporary
                 }
             }
         }
@@ -114,15 +120,15 @@ impl PoolError {
 impl From<reqwest::Error> for PoolsDataError {
     fn from(error: reqwest::Error) -> Self {
         if error.is_timeout() {
-            PoolsDataError::RequestTimeout {
+            Self::RequestTimeout {
                 timeout: Duration::from_secs(30), // Default timeout
             }
         } else if error.is_connect() || error.is_request() {
-            PoolsDataError::NetworkError {
+            Self::NetworkError {
                 message: error.to_string(),
             }
         } else {
-            PoolsDataError::InternalError {
+            Self::InternalError {
                 message: error.to_string(),
             }
         }
@@ -131,7 +137,7 @@ impl From<reqwest::Error> for PoolsDataError {
 
 impl From<serde_json::Error> for PoolsDataError {
     fn from(error: serde_json::Error) -> Self {
-        PoolsDataError::ParseError {
+        Self::ParseError {
             message: error.to_string(),
         }
     }
