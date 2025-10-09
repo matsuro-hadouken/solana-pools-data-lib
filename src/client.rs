@@ -216,8 +216,8 @@ impl PoolsDataClient {
                     return Err(PoolError::new(
                         pool_name,
                         authority,
-                        PoolsDataError::PoolNotFound {
-                            pool_name: pool_info.name.clone(),
+                        PoolsDataError::NoStakeAccounts { 
+                            pool_name: pool_info.name.clone() 
                         },
                         0,
                     ));
