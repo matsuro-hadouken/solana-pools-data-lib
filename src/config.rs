@@ -5,12 +5,78 @@
 
 use crate::error::{PoolsDataError, Result};
 use governor::{Quota, RateLimiter};
+use std::sync::Arc;
 use std::time::Duration;
+
+/// Advanced rate limiting configuration
+#[derive(Debug, Clone)]
+pub struct RateLimitConfig {
+    /// Primary rate limit (requests per second)
+    pub requests_per_second: Option<u32>,
+    /// Burst limit (max requests in burst)
+    pub burst_size: Option<u32>,
+    /// Time window for rate limiting
+    pub time_window: Duration,
+}
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self {
+            requests_per_second: Some(DefaultConfig::RATE_LIMIT_PER_SECOND),
+            burst_size: None,
+            time_window: Duration::from_secs(1),
+        }
+    }
+}
+
+impl RateLimitConfig {
+    /// Create new rate limit config
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            requests_per_second: None,
+            burst_size: None,
+            time_window: Duration::from_secs(1),
+        }
+    }
+
+    /// Set requests per second
+    #[must_use]
+    pub const fn requests_per_second(mut self, rps: u32) -> Self {
+        self.requests_per_second = Some(rps);
+        self
+    }
+
+    /// Set burst size
+    #[must_use]
+    pub const fn burst_size(mut self, burst: u32) -> Self {
+        self.burst_size = Some(burst);
+        self
+    }
+
+    /// Set time window
+    #[must_use]
+    pub const fn time_window(mut self, window: Duration) -> Self {
+        self.time_window = window;
+        self
+    }
+
+    /// No rate limiting
+    #[must_use]
+    pub const fn none() -> Self {
+        Self {
+            requests_per_second: None,
+            burst_size: None,
+            time_window: Duration::from_secs(1),
+        }
+    }
+}
 
 /// Configuration builder for `PoolsDataClient`
 #[derive(Debug, Clone)]
 pub struct PoolsDataClientBuilder {
     rate_limit: Option<u32>,
+    burst_size: Option<u32>,
     retry_attempts: u32,
     retry_base_delay_ms: u64,
     timeout_secs: u64,
@@ -21,6 +87,7 @@ impl Default for PoolsDataClientBuilder {
     fn default() -> Self {
         Self {
             rate_limit: Some(DefaultConfig::RATE_LIMIT_PER_SECOND),
+            burst_size: None,
             retry_attempts: DefaultConfig::RETRY_ATTEMPTS,
             retry_base_delay_ms: DefaultConfig::RETRY_BASE_DELAY_MS,
             timeout_secs: DefaultConfig::REQUEST_TIMEOUT_SECS,
@@ -47,6 +114,13 @@ impl PoolsDataClientBuilder {
     #[must_use]
     pub const fn no_rate_limit(mut self) -> Self {
         self.rate_limit = None;
+        self
+    }
+
+    /// Set burst size for rate limiting
+    #[must_use]
+    pub const fn burst_size(mut self, burst: u32) -> Self {
+        self.burst_size = Some(burst);
         self
     }
 
@@ -78,17 +152,6 @@ impl PoolsDataClientBuilder {
         self
     }
 
-    /// Apply public RPC configuration
-    #[must_use]
-    pub const fn public_rpc_config(mut self) -> Self {
-        self.rate_limit = Some(DefaultConfig::RATE_LIMIT_PER_SECOND);
-        self.retry_attempts = DefaultConfig::RETRY_ATTEMPTS;
-        self.retry_base_delay_ms = DefaultConfig::RETRY_BASE_DELAY_MS;
-        self.timeout_secs = DefaultConfig::REQUEST_TIMEOUT_SECS;
-        self.max_concurrent = DefaultConfig::MAX_CONCURRENT_REQUESTS;
-        self
-    }
-
     /// Use preset configuration for private/premium RPC endpoints
     #[must_use]
     pub const fn private_rpc_config(mut self) -> Self {
@@ -97,6 +160,118 @@ impl PoolsDataClientBuilder {
         self.retry_base_delay_ms = PrivateRpcConfig::RETRY_BASE_DELAY_MS;
         self.timeout_secs = PrivateRpcConfig::REQUEST_TIMEOUT_SECS;
         self.max_concurrent = PrivateRpcConfig::MAX_CONCURRENT_REQUESTS;
+        self
+    }
+
+    /// Use preset configuration for Alchemy RPC
+    #[must_use]
+    pub const fn alchemy_config(mut self) -> Self {
+        self.rate_limit = Some(AlchemyConfig::RATE_LIMIT_PER_SECOND);
+        self.retry_attempts = AlchemyConfig::RETRY_ATTEMPTS;
+        self.retry_base_delay_ms = AlchemyConfig::RETRY_BASE_DELAY_MS;
+        self.timeout_secs = AlchemyConfig::REQUEST_TIMEOUT_SECS;
+        self.max_concurrent = AlchemyConfig::MAX_CONCURRENT_REQUESTS;
+        self
+    }
+
+    /// Use preset configuration for `QuickNode` RPC
+    #[must_use]
+    pub const fn quicknode_config(mut self) -> Self {
+        self.rate_limit = Some(QuickNodeConfig::RATE_LIMIT_PER_SECOND);
+        self.retry_attempts = QuickNodeConfig::RETRY_ATTEMPTS;
+        self.retry_base_delay_ms = QuickNodeConfig::RETRY_BASE_DELAY_MS;
+        self.timeout_secs = QuickNodeConfig::REQUEST_TIMEOUT_SECS;
+        self.max_concurrent = QuickNodeConfig::MAX_CONCURRENT_REQUESTS;
+        self
+    }
+
+    /// Use preset configuration for Helius RPC
+    #[must_use]
+    pub const fn helius_config(mut self) -> Self {
+        self.rate_limit = Some(HeliusConfig::RATE_LIMIT_PER_SECOND);
+        self.retry_attempts = HeliusConfig::RETRY_ATTEMPTS;
+        self.retry_base_delay_ms = HeliusConfig::RETRY_BASE_DELAY_MS;
+        self.timeout_secs = HeliusConfig::REQUEST_TIMEOUT_SECS;
+        self.max_concurrent = HeliusConfig::MAX_CONCURRENT_REQUESTS;
+        self
+    }
+
+    /// Use preset configuration for public RPC endpoints (most conservative)
+    #[must_use]
+    pub const fn public_rpc_config(mut self) -> Self {
+        self.rate_limit = Some(PublicRpcConfig::RATE_LIMIT_PER_SECOND);
+        self.retry_attempts = PublicRpcConfig::RETRY_ATTEMPTS;
+        self.retry_base_delay_ms = PublicRpcConfig::RETRY_BASE_DELAY_MS;
+        self.timeout_secs = PublicRpcConfig::REQUEST_TIMEOUT_SECS;
+        self.max_concurrent = PublicRpcConfig::MAX_CONCURRENT_REQUESTS;
+        self
+    }
+
+    /// Use preset configuration for development/testing
+    #[must_use]
+    pub const fn development_config(mut self) -> Self {
+        self.rate_limit = Some(DevelopmentConfig::RATE_LIMIT_PER_SECOND);
+        self.retry_attempts = DevelopmentConfig::RETRY_ATTEMPTS;
+        self.retry_base_delay_ms = DevelopmentConfig::RETRY_BASE_DELAY_MS;
+        self.timeout_secs = DevelopmentConfig::REQUEST_TIMEOUT_SECS;
+        self.max_concurrent = DevelopmentConfig::MAX_CONCURRENT_REQUESTS;
+        self
+    }
+
+    /// Use preset configuration for enterprise/dedicated endpoints
+    #[must_use]
+    pub const fn enterprise_config(mut self) -> Self {
+        self.rate_limit = Some(EnterpriseConfig::RATE_LIMIT_PER_SECOND);
+        self.retry_attempts = EnterpriseConfig::RETRY_ATTEMPTS;
+        self.retry_base_delay_ms = EnterpriseConfig::RETRY_BASE_DELAY_MS;
+        self.timeout_secs = EnterpriseConfig::REQUEST_TIMEOUT_SECS;
+        self.max_concurrent = EnterpriseConfig::MAX_CONCURRENT_REQUESTS;
+        self
+    }
+
+    /// Auto-detect configuration based on RPC URL
+    #[must_use]
+    pub fn auto_config(mut self, rpc_url: &str) -> Self {
+        // Basic URL-based detection
+        let url_lower = rpc_url.to_lowercase();
+        
+        if url_lower.contains("alchemy") {
+            self = self.alchemy_config();
+        } else if url_lower.contains("quicknode") {
+            self = self.quicknode_config();
+        } else if url_lower.contains("helius") {
+            self = self.helius_config();
+        } else if url_lower.contains("mainnet-beta.solana.com") || url_lower.contains("api.mainnet") {
+            self = self.public_rpc_config();
+        } else if url_lower.contains("localhost") || url_lower.contains("127.0.0.1") {
+            self = self.development_config();
+        } else {
+            // Default to conservative settings for unknown endpoints
+            self = self.private_rpc_config();
+        }
+        
+        self
+    }
+
+    /// Configuration for high-frequency trading or real-time applications
+    #[must_use]
+    pub const fn high_frequency_config(mut self) -> Self {
+        self.rate_limit = Some(200);
+        self.retry_attempts = 1;
+        self.retry_base_delay_ms = 25;
+        self.timeout_secs = 5;
+        self.max_concurrent = 50;
+        self
+    }
+
+    /// Configuration for batch processing applications
+    #[must_use]
+    pub const fn batch_processing_config(mut self) -> Self {
+        self.rate_limit = Some(10);
+        self.retry_attempts = 5;
+        self.retry_base_delay_ms = 500;
+        self.timeout_secs = 60;
+        self.max_concurrent = 20;
         self
     }
 
@@ -135,7 +310,7 @@ impl PoolsDataClientBuilder {
                 });
             }
             match std::num::NonZeroU32::new(rps) {
-                Some(nonzero_rps) => Some(RateLimiter::direct(Quota::per_second(nonzero_rps))),
+                Some(nonzero_rps) => Some(Arc::new(RateLimiter::direct(Quota::per_second(nonzero_rps)))),
                 None => {
                     return Err(PoolsDataError::ConfigurationError {
                         message: "Rate limit must be greater than 0".to_string(),
@@ -162,11 +337,11 @@ impl PoolsDataClientBuilder {
 pub struct ClientConfig {
     pub rpc_url: String,
     pub rate_limiter: Option<
-        RateLimiter<
+        Arc<RateLimiter<
             governor::state::direct::NotKeyed,
             governor::state::InMemoryState,
             governor::clock::DefaultClock,
-        >,
+        >>,
     >,
     pub retry_attempts: u32,
     pub retry_base_delay: Duration,
@@ -204,14 +379,86 @@ impl PrivateRpcConfig {
     /// More concurrent requests for private RPC
     pub const MAX_CONCURRENT_REQUESTS: usize = 10;
 
-    /// Fewer retries needed with reliable private RPC
+    /// Retry attempts for failed requests
     pub const RETRY_ATTEMPTS: u32 = 2;
 
-    /// Faster retry with reliable private RPC
+    /// Base delay for exponential backoff
     pub const RETRY_BASE_DELAY_MS: u64 = 100;
 
-    /// Shorter timeout with fast private RPC
+    /// Request timeout duration
     pub const REQUEST_TIMEOUT_SECS: u64 = 15;
+}
+
+/// Configuration for Alchemy RPC provider
+pub struct AlchemyConfig;
+
+impl AlchemyConfig {
+    /// Alchemy supports high rate limits
+    pub const RATE_LIMIT_PER_SECOND: u32 = 25;
+    pub const MAX_CONCURRENT_REQUESTS: usize = 8;
+    pub const RETRY_ATTEMPTS: u32 = 2;
+    pub const RETRY_BASE_DELAY_MS: u64 = 150;
+    pub const REQUEST_TIMEOUT_SECS: u64 = 20;
+}
+
+/// Configuration for `QuickNode` RPC provider
+pub struct QuickNodeConfig;
+
+impl QuickNodeConfig {
+    /// `QuickNode` performance characteristics: 20 RPS limit
+    pub const RATE_LIMIT_PER_SECOND: u32 = 20;
+    pub const MAX_CONCURRENT_REQUESTS: usize = 6;
+    pub const RETRY_ATTEMPTS: u32 = 2;
+    pub const RETRY_BASE_DELAY_MS: u64 = 200;
+    pub const REQUEST_TIMEOUT_SECS: u64 = 25;
+}
+
+/// Configuration for Helius RPC provider
+pub struct HeliusConfig;
+
+impl HeliusConfig {
+    /// Helius optimized settings
+    pub const RATE_LIMIT_PER_SECOND: u32 = 30;
+    pub const MAX_CONCURRENT_REQUESTS: usize = 10;
+    pub const RETRY_ATTEMPTS: u32 = 2;
+    pub const RETRY_BASE_DELAY_MS: u64 = 100;
+    pub const REQUEST_TIMEOUT_SECS: u64 = 15;
+}
+
+/// Configuration for public RPC endpoints (most conservative)
+pub struct PublicRpcConfig;
+
+impl PublicRpcConfig {
+    /// Configuration for public endpoints: 1 RPS limit
+    pub const RATE_LIMIT_PER_SECOND: u32 = 1;
+    pub const MAX_CONCURRENT_REQUESTS: usize = 1;
+    pub const RETRY_ATTEMPTS: u32 = 5;
+    pub const RETRY_BASE_DELAY_MS: u64 = 1000;
+    pub const REQUEST_TIMEOUT_SECS: u64 = 45;
+}
+
+/// Configuration for development/testing
+pub struct DevelopmentConfig;
+
+impl DevelopmentConfig {
+    /// Moderate settings for development
+    pub const RATE_LIMIT_PER_SECOND: u32 = 10;
+    pub const MAX_CONCURRENT_REQUESTS: usize = 5;
+    pub const RETRY_ATTEMPTS: u32 = 3;
+    pub const RETRY_BASE_DELAY_MS: u64 = 500;
+    pub const REQUEST_TIMEOUT_SECS: u64 = 20;
+}
+
+/// Configuration for enterprise/dedicated endpoints
+pub struct EnterpriseConfig;
+
+impl EnterpriseConfig {
+    /// High performance for enterprise endpoints
+    pub const RATE_LIMIT_PER_SECOND: u32 = 100;
+    pub const MAX_CONCURRENT_REQUESTS: usize = 20;
+    pub const RETRY_ATTEMPTS: u32 = 1;
+    pub const RETRY_BASE_DELAY_MS: u64 = 50;
+    pub const REQUEST_TIMEOUT_SECS: u64 = 10;
 }
 
 /// No limits configuration for local testing

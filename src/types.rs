@@ -433,7 +433,7 @@ pub struct StaticField {
     pub name: String,
     /// Constant value
     pub value: String,
-    /// Description of why it's static
+    /// Description of static field characteristics
     pub description: String,
 }
 

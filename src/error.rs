@@ -97,7 +97,7 @@ impl PoolError {
             | PoolsDataError::RequestTimeout { .. }
             | PoolsDataError::InternalError { .. } => true,
 
-            // Non-retryable errors - permanent issues that won't be fixed by retrying
+            // Non-retryable errors - permanent issues that cannot be resolved by retrying
             PoolsDataError::ParseError { .. }
             | PoolsDataError::ConfigurationError { .. }
             | PoolsDataError::PoolNotFound { .. }
@@ -108,7 +108,7 @@ impl PoolError {
             // RPC errors - depends on specific error code
             PoolsDataError::RpcError { code, .. } => {
                 match code {
-                    -32602 | -32601 => false, // Invalid params/method - don't retry
+                    -32602 | -32601 => false, // Invalid params/method - not retryable
                     _ => true,                // Other RPC errors may be temporary
                 }
             }
@@ -144,7 +144,7 @@ impl From<serde_json::Error> for PoolsDataError {
 }
 
 // Note: Governor's NotUntil type is complex and version-dependent
-// We'll handle rate limiting errors manually in the client code instead
+// Rate limiting errors are handled manually in the client code instead
 
 /// Result type for operations that might fail with `PoolsDataError`
 pub type Result<T> = std::result::Result<T, PoolsDataError>;

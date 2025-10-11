@@ -7,16 +7,37 @@ Production patterns for using the Solana Pools Data Library in real applications
 ```rust
 use solana_pools_data_lib::PoolsDataClient;
 
-// Public RPC - use preset configuration
+// Auto-detect configuration (Recommended)
 let client = PoolsDataClient::builder()
-    .public_rpc_config()
+    .auto_config("https://api.mainnet-beta.solana.com")
     .build("https://api.mainnet-beta.solana.com")
     .and_then(PoolsDataClient::from_config)?;
 
-// Private RPC - use preset configuration
+// Provider-specific presets
 let client = PoolsDataClient::builder()
-    .private_rpc_config()
-    .build("your_private_rpc_url")
+    .alchemy_config()
+    .build("https://solana-mainnet.g.alchemy.com/v2/YOUR_API_KEY")
+    .and_then(PoolsDataClient::from_config)?;
+
+let client = PoolsDataClient::builder()
+    .quicknode_config()
+    .build("https://your-endpoint.solana-mainnet.quiknode.pro/YOUR_TOKEN/")
+    .and_then(PoolsDataClient::from_config)?;
+
+let client = PoolsDataClient::builder()
+    .helius_config()
+    .build("https://mainnet.helius-rpc.com/?api-key=YOUR_API_KEY")
+    .and_then(PoolsDataClient::from_config)?;
+
+// Use case specific configurations
+let client = PoolsDataClient::builder()
+    .high_frequency_config()        // For real-time trading
+    .build("https://your-premium-rpc.com")
+    .and_then(PoolsDataClient::from_config)?;
+
+let client = PoolsDataClient::builder()
+    .batch_processing_config()      // For bulk operations
+    .build("https://your-rpc.com")
     .and_then(PoolsDataClient::from_config)?;
 ```
 
@@ -45,7 +66,7 @@ for (pool_name, pool_data) in pools {
 use axum::{extract::Path, response::Json, Router, routing::get};
 use serde_json::Value;
 
-// Simple endpoint that returns pool data
+// Endpoint that returns pool data
 async fn get_pool_handler(Path(pool_name): Path<String>) -> Result<Json<Value>, String> {
     let client = PoolsDataClient::builder()
         .public_rpc_config()
@@ -202,9 +223,9 @@ for (batch_num, batch) in pool_names.chunks(3).enumerate() {
 
 // Conservative (Public RPC)
 let client = PoolsDataClient::builder()
-    .rate_limit(1)              // Very conservative
-    .retry_attempts(3)          // More retries
-    .timeout(10)                // Longer timeout
+    .rate_limit(1)              // Conservative rate limiting
+    .retry_attempts(3)          // Additional retries
+    .timeout(10)                // Extended timeout
     .build("https://api.mainnet-beta.solana.com")
     .and_then(PoolsDataClient::from_config)?;
 
@@ -220,14 +241,14 @@ let client = PoolsDataClient::builder()
 
 ## Production Checklist
 
-- ✅ Use **preset configurations** for quick setup (`.public_rpc_config()`, `.private_rpc_config()`)
-- ✅ Use `fetch_pools()` for production (clean, consistent schema)
-- ✅ Use `fetch_pools_debug()` only for debugging and analysis
-- ✅ Implement proper error handling and logging
-- ✅ Add caching for frequently accessed data
-- ✅ Use batch processing for multiple pools (chunks of 3-5)
-- ✅ Add rate limiting between batches (1-2 second delays)
-- ✅ Test with real data before deploying
+- Use preset configurations for quick setup (`.public_rpc_config()`, `.private_rpc_config()`)
+- Use `fetch_pools()` for production (optimized, consistent schema)
+- Use `fetch_pools_debug()` only for debugging and analysis
+- Implement proper error handling and logging
+- Add caching for frequently accessed data
+- Use batch processing for multiple pools (chunks of 3-5)
+- Add rate limiting between batches (1-2 second delays)
+- Test with real data before deploying
 
 ## Working Examples
 
@@ -241,6 +262,6 @@ cargo run --example quick_test
 # Production batch processing
 cargo run --example comprehensive
 
-# Database integration
-cargo run --example backend_compatibility
+# RPC configuration and provider settings
+cargo run --example rpc_configuration
 ```

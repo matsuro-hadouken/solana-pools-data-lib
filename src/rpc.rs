@@ -153,10 +153,10 @@ struct RawStakeData {
 #[derive(Debug, Deserialize)]
 struct RawDelegation {
     #[serde(rename = "activationEpoch")]
-    activation_epoch: String, // String because it can be very large numbers
+    activation_epoch: String, // String because values can exceed standard integer limits
     #[serde(rename = "deactivationEpoch")]
     deactivation_epoch: String,
-    stake: String, // String because it's a large number
+    stake: String, // String because values can exceed standard integer limits
     voter: String,
     #[serde(rename = "warmupCooldownRate")]
     warmup_cooldown_rate: f64,
@@ -209,7 +209,7 @@ impl RpcClient {
         let request_id = self.next_request_id();
         let request = RpcRequest::get_program_accounts_stake(request_id, authority);
 
-        log::debug!("Sending RPC request for authority: {}", authority);
+        log::debug!("Sending RPC request for authority: {authority}");
 
         let response = self
             .client
@@ -269,7 +269,7 @@ impl RpcClient {
             match Self::parse_stake_account(raw_account) {
                 Ok(stake_account) => stake_accounts.push(stake_account),
                 Err(e) => {
-                    log::warn!("Failed to parse stake account {}: {}", pubkey, e);
+                    log::warn!("Failed to parse stake account {pubkey}: {e}");
                     // Continue processing other accounts instead of failing completely
                 }
             }
@@ -495,8 +495,8 @@ impl RpcClient {
         // If data field is present, it should be valid JSON
         if let Some(data) = &error.data {
             // Basic validation that data is a valid JSON value
-            // The data field is already parsed as serde_json::Value, so it's valid JSON
-            log::debug!("RPC error includes additional data: {}", data);
+            // The data field is already parsed as serde_json::Value, ensuring valid JSON
+            log::debug!("RPC error includes additional data: {data}");
         }
 
         Ok(())

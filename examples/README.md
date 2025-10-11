@@ -2,6 +2,12 @@
 
 ## Available Examples
 
+### `rpc_configuration.rs`
+Comprehensive RPC configuration guide for all providers and use cases:
+```bash
+cargo run --example rpc_configuration
+```
+
 ### `quick_test.rs`
 Library overview and quick test:
 ```bash

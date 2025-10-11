@@ -1,4 +1,4 @@
-//! Clean, simple client for fetching pools data.
+//! Client for fetching pools data.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -68,8 +68,8 @@ impl PoolsDataClient {
 
     /// Fetch stake pool data for production use
     ///
-    /// Returns clean data with static/redundant fields removed.
-    /// Safe for databases, APIs, and production systems.
+    /// Returns data with static/redundant fields removed.
+    /// Use this method for production databases where storage size matters.
     ///
     /// # Errors
     ///
@@ -134,6 +134,7 @@ impl PoolsDataClient {
             let semaphore = Arc::clone(&self.semaphore);
             let retry_attempts = self.config.retry_attempts;
             let retry_base_delay = self.config.retry_base_delay;
+            let rate_limiter = self.config.rate_limiter.clone();
 
             let task = tokio::spawn(async move {
                 Self::fetch_single_pool_impl(
@@ -142,6 +143,7 @@ impl PoolsDataClient {
                     pool_info,
                     retry_attempts,
                     retry_base_delay,
+                    rate_limiter,
                 )
                 .await
             });
@@ -163,7 +165,7 @@ impl PoolsDataClient {
                         .insert(pool_error.pool_name.clone(), pool_error);
                 }
                 Err(join_error) => {
-                    log::error!("Task join error: {}", join_error);
+                    log::error!("Task join error: {join_error}");
                     result.failed.insert(
                         "unknown".to_string(),
                         PoolError::new(
@@ -199,6 +201,7 @@ impl PoolsDataClient {
         pool_info: PoolInfo,
         retry_attempts: u32,
         retry_base_delay: Duration,
+        rate_limiter: Option<Arc<governor::RateLimiter<governor::state::direct::NotKeyed, governor::state::InMemoryState, governor::clock::DefaultClock>>>,
     ) -> std::result::Result<PoolData, PoolError> {
         let _permit = semaphore.acquire().await.map_err(|e| {
             PoolError::new(
@@ -210,6 +213,11 @@ impl PoolsDataClient {
                 0,
             )
         })?;
+
+        // Apply rate limiting if configured
+        if let Some(limiter) = &rate_limiter {
+            limiter.until_ready().await;
+        }
 
         log::debug!("Fetching pool: {}", pool_info.name);
 
@@ -256,7 +264,7 @@ impl PoolsDataClient {
                 })
             }
             Err(e) => {
-                log::error!("Failed to fetch pool {}: {}", pool_name, e);
+                log::error!("Failed to fetch pool {pool_name}: {e}");
                 Err(PoolError::new(pool_name, authority, e, 0))
             }
         }

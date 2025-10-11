@@ -22,9 +22,9 @@ cd solana-pools-data-lib/pools-data-lib
 cargo run --example quick_test
 ```
 
-## Two Simple Formats
+## Two Output Formats
 
-**Production**: Clean data, safe for databases
+**Production**: Optimized data, suitable for databases
 
 **Debug**: Complete RPC data for debugging
 
@@ -35,14 +35,14 @@ use solana_pools_data_lib::PoolsDataClient;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create client with optimized settings for public RPC
+    // Auto-detect configuration for any RPC endpoint (Recommended)
     let client = PoolsDataClient::builder()
-        .public_rpc_config()  // Optimized for public endpoints
+        .auto_config("https://api.mainnet-beta.solana.com")
         .build("https://api.mainnet-beta.solana.com")
         .and_then(PoolsDataClient::from_config)?;
 
-    // Production format - clean and safe for databases
-    let pools = client.fetch_pools(&["jito", "marinade"]).await?;
+    // Production format - optimized for databases
+    let pool_data = client.fetch_pools(&["jito"]).await?;
     
     for (pool_name, pool_data) in pools {
         println!("Pool: {}", pool_name);

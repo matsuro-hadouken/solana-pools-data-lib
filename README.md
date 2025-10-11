@@ -1,12 +1,13 @@
 # Solana Pools Data Library
 
-Clean, simple Rust library for fetching Solana stake pool data.
+Rust library for fetching Solana stake pool data.
 
 > **Note**: This library is currently in development. Install directly from GitHub until published to crates.io.
 
 ## Features
 
-- **Two Output Formats**: Production (clean) and Debug (complete RPC data)
+- **Two Output Formats**: Production (optimized) and Debug (complete RPC data)
+- **RPC Provider Detection**: Automatic configuration for Alchemy, QuickNode, Helius
 - **32 Supported Pools**: All major Solana stake pools included
 - **Production Ready**: Rate limiting, retries, timeout handling
 - **Safe by Design**: Consistent schemas, no breaking changes
@@ -49,8 +50,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build("https://api.mainnet-beta.solana.com")
         .and_then(PoolsDataClient::from_config)?;
 
-    // Production format - clean and safe for databases
-    let pools = client.fetch_pools(&["jito", "marinade"]).await?;
+    // Production format - optimized for databases
+    let production_data = client.fetch_pools(&["jito"]).await?;
     
     for (pool_name, pool_data) in pools {
         println!("Pool: {}", pool_name);
@@ -65,7 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Two Output Formats
 
-### Production Format - Clean and Safe
+### Production Format - Optimized Storage
 
 ```rust
 let pools = client.fetch_pools(&["jito", "marinade"]).await?;
@@ -105,10 +106,34 @@ for (pool_name, pool_data) in &debug_result.successful {
 
 ## Configuration
 
-### Quick Setup with Presets
+### Quick Setup with Provider Presets
 
 ```rust
-// Public RPC - optimized for public endpoints
+// Auto-detect configuration based on URL (Recommended)
+let client = PoolsDataClient::builder()
+    .auto_config("https://api.mainnet-beta.solana.com")
+    .build("https://api.mainnet-beta.solana.com")
+    .and_then(PoolsDataClient::from_config)?;
+
+// Alchemy RPC - optimized for Alchemy endpoints
+let client = PoolsDataClient::builder()
+    .alchemy_config()
+    .build("https://solana-mainnet.g.alchemy.com/v2/YOUR_API_KEY")
+    .and_then(PoolsDataClient::from_config)?;
+
+// QuickNode RPC - optimized for QuickNode endpoints  
+let client = PoolsDataClient::builder()
+    .quicknode_config()
+    .build("https://your-endpoint.solana-mainnet.quiknode.pro/YOUR_TOKEN/")
+    .and_then(PoolsDataClient::from_config)?;
+
+// Helius RPC - optimized for Helius endpoints
+let client = PoolsDataClient::builder()
+    .helius_config()
+    .build("https://mainnet.helius-rpc.com/?api-key=YOUR_API_KEY")
+    .and_then(PoolsDataClient::from_config)?;
+
+// Public RPC - most conservative settings for public endpoints
 let client = PoolsDataClient::builder()
     .public_rpc_config()
     .build("https://api.mainnet-beta.solana.com")
@@ -121,24 +146,55 @@ let client = PoolsDataClient::builder()
     .and_then(PoolsDataClient::from_config)?;
 ```
 
-### Manual Configuration
+### Use Case Specific Configurations
 
 ```rust
-// Conservative for public RPC
+// High-frequency trading or real-time applications
 let client = PoolsDataClient::builder()
-    .rate_limit(1)
-    .retry_attempts(3)
-    .timeout(10)
-    .build("https://api.mainnet-beta.solana.com")
+    .high_frequency_config()
+    .build("https://your-premium-rpc.com")
     .and_then(PoolsDataClient::from_config)?;
 
-// Aggressive for private RPC
+// Batch processing applications
+let client = PoolsDataClient::builder()
+    .batch_processing_config()
+    .build("https://your-rpc.com")
+    .and_then(PoolsDataClient::from_config)?;
+
+// Development and testing
+let client = PoolsDataClient::builder()
+    .development_config()
+    .build("http://localhost:8899")
+    .and_then(PoolsDataClient::from_config)?;
+
+// Enterprise/dedicated endpoints
+let client = PoolsDataClient::builder()
+    .enterprise_config()
+    .build("https://your-enterprise-rpc.com")
+    .and_then(PoolsDataClient::from_config)?;
+```
+
+### Manual Fine-tuning
+
+```rust
+// Custom configuration for specific requirements
+let client = PoolsDataClient::builder()
+    .rate_limit(3)                    // 3 requests per second
+    .burst_size(10)                   // Allow burst of 10 requests
+    .retry_attempts(5)                // 5 retry attempts
+    .retry_base_delay(2000)           // 2 second base delay  
+    .timeout(30)                      // 30 second timeout
+    .max_concurrent_requests(2)       // 2 concurrent requests
+    .build("https://your-custom-rpc.com")
+    .and_then(PoolsDataClient::from_config)?;
+
+// No rate limiting for local development
 let client = PoolsDataClient::builder()
     .no_rate_limit()
     .retry_attempts(1)
-    .timeout(2)
-    .max_concurrent_requests(10)
-    .build("your_private_rpc_url")
+    .timeout(5)
+    .max_concurrent_requests(50)
+    .build("http://localhost:8899")
     .and_then(PoolsDataClient::from_config)?;
 ```
 
@@ -188,7 +244,7 @@ for (pool_name, pool_data) in pools {
 ### REST API Integration
 
 ```rust
-// Simple integration with web frameworks
+// Integration with web frameworks
 async fn get_pool_data(pool_name: &str) -> Result<PoolData, Error> {
     let client = PoolsDataClient::builder()
         .public_rpc_config()

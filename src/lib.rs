@@ -1,10 +1,10 @@
 //! # Pools Data Library
 //!
-//! A clean, simple Rust library for fetching Solana stake pool data.
+//! Rust library for fetching Solana stake pool data.
 //!
 //! ## Two Output Formats
 //!
-//! - **Production**: Clean data with static fields removed (safe for databases)
+//! - **Production**: Data with static fields removed (suitable for databases)
 //! - **Debug**: Complete RPC data with ALL fields (for debugging)
 //!
 //! ## Example
@@ -19,7 +19,7 @@
 //!         .build("https://api.mainnet-beta.solana.com")
 //!         .and_then(PoolsDataClient::from_config)?;
 //!
-//!     // Production use - clean and safe
+//!     // Production use - optimized format
 //!     let production_data = client.fetch_pools(&["jito", "marinade"]).await?;
 //!     
 //!     // Debug use - complete RPC data
