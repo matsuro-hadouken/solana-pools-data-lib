@@ -1,10 +1,11 @@
 use solana_pools_data_lib::*;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::time::sleep;
 
 /// Fetch all supported pools with proper configuration
 #[tokio::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let start = Instant::now();
     println!("Comprehensive pools data fetch\n");
 
     let available_pools = PoolsDataClient::list_available_pools();
@@ -63,6 +64,9 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         "  Success rate: {:.1}%",
         (successful as f64 / available_pools.len() as f64) * 100.0
     );
+
+    let duration = start.elapsed();
+    println!("\nExecution time: {:.2?}", duration);
 
     Ok(())
 }

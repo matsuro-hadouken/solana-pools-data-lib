@@ -1,8 +1,10 @@
 use solana_pools_data_lib::*;
+use std::time::Instant;
 
 /// Show available pools and quick test
 #[tokio::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let start = Instant::now();
     println!("=== AVAILABLE POOLS & QUICK TEST ===\n");
 
     // Show all available pools
@@ -69,5 +71,9 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("\nLibrary test completed successfully with structured data.");
+
+    let duration = start.elapsed();
+    println!("\nExecution time: {:.2?}", duration);
+
     Ok(())
 }

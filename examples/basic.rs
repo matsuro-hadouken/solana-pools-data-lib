@@ -1,10 +1,11 @@
 use solana_pools_data_lib::*;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::time::sleep;
 
 /// Complete configuration reference - all available options
 #[tokio::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let start = Instant::now();
     println!("Complete Configuration Reference\n");
 
     // Configuration 1: All options with conservative values
@@ -193,6 +194,9 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!(
         "\nAlways use 8-second delays between operations for public RPC to avoid rate limiting."
     );
+
+    let duration = start.elapsed();
+    println!("\nExecution time: {:.2?}", duration);
 
     Ok(())
 }

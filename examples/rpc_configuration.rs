@@ -1,8 +1,10 @@
 use solana_pools_data_lib::*;
+use std::time::Instant;
 
 /// Comprehensive RPC configuration examples for different providers and use cases
 #[tokio::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let start = Instant::now();
     println!("=== COMPREHENSIVE RPC CONFIGURATION GUIDE ===\n");
 
     // Example 1: Auto-detection based on URL
@@ -183,6 +185,9 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("   - Increase rate limits gradually with private RPC");
     println!("   - Monitor RPC provider limits and adjust accordingly");
     println!("   - Use public_rpc_config() as fallback for unknown endpoints");
+
+    let duration = start.elapsed();
+    println!("\nExecution time: {:.2?}", duration);
 
     Ok(())
 }
