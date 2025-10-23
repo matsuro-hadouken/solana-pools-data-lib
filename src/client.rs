@@ -278,18 +278,21 @@ impl PoolsDataClient {
 
         for account in stake_accounts {
             if let Some(delegation) = &account.delegation {
-                let entry =
-                    distribution
-                        .entry(delegation.voter.clone())
-                        .or_insert(ValidatorStake {
-                            total_delegated: 0,
-                            account_count: 0,
-                            accounts: Vec::new(),
-                        });
+                // Only sum stake accounts that are active (deactivation_epoch == u64::MAX) and stake > 0
+                if delegation.deactivation_epoch == u64::MAX && delegation.stake > 0 {
+                    let entry =
+                        distribution
+                            .entry(delegation.voter.clone())
+                            .or_insert(ValidatorStake {
+                                total_delegated: 0,
+                                account_count: 0,
+                                accounts: Vec::new(),
+                            });
 
-                entry.total_delegated += delegation.stake;
-                entry.account_count += 1;
-                entry.accounts.push(account.pubkey.clone());
+                    entry.total_delegated += delegation.stake;
+                    entry.account_count += 1;
+                    entry.accounts.push(account.pubkey.clone());
+                }
             }
         }
 

@@ -287,8 +287,8 @@ cargo run --example basic
 # All 32 pools
 cargo run --example comprehensive
 
-# Format comparison
-cargo run --example format_comparison
+# RPC configuration guidelines
+cargo run --example rpc_configuration
 ```
 
 ## Additional Documentation
