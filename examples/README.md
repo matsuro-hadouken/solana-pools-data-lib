@@ -1,3 +1,8 @@
+### `validator_map.rs`
+Minimal demo showing all available fields for a single pool and a single validator.
+```bash
+cargo run --example validator_map
+```
 # Examples
 
 ## Available Examples

@@ -271,6 +271,12 @@ impl PoolsDataClient {
     }
 
     /// Calculate validator distribution from stake accounts
+    ///
+    /// Filtering logic:
+    /// - Only include stake accounts where `deactivation_epoch == u64::MAX` (active)
+    /// - Only include accounts with `stake > 0`
+    ///
+    /// This matches Solana Foundation reference logic for active stake aggregation.
     fn calculate_validator_distribution(
         stake_accounts: &[StakeAccountInfo],
     ) -> HashMap<String, ValidatorStake> {

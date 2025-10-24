@@ -145,7 +145,7 @@ struct RawStakeLockup {
 #[derive(Debug, Deserialize)]
 struct RawStakeData {
     #[serde(rename = "creditsObserved")]
-    credits_observed: u64,
+    last_epoch_credits_cumulative: u64,
     delegation: RawDelegation,
 }
 
@@ -405,7 +405,7 @@ impl RpcClient {
             stake,
             activation_epoch,
             deactivation_epoch,
-            credits_observed: raw.credits_observed,
+            last_epoch_credits_cumulative: raw.last_epoch_credits_cumulative,
             warmup_cooldown_rate: raw.delegation.warmup_cooldown_rate,
         })
     }
@@ -521,7 +521,7 @@ mod tests {
         let _client = RpcClient::new("http://test".to_string(), Duration::from_secs(30));
 
         let raw_stake_data = RawStakeData {
-            credits_observed: 1000,
+            last_epoch_credits_cumulative: 1000,
             delegation: RawDelegation {
                 activation_epoch: "100".to_string(),
                 deactivation_epoch: "18446744073709551615".to_string(),

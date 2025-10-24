@@ -83,6 +83,17 @@ pub struct PoolData {
     /// Pool authority public key
     pub authority: String,
     /// All stake accounts belonging to this pool
+    ///
+    /// Each stake account includes:
+    /// - Account public key
+    /// - Stake size (lamports)
+    /// - Activation epoch
+    /// - Deactivation epoch
+    /// - Credits observed
+    ///
+    /// Filtering logic for active stake accounts:
+    /// - `deactivation_epoch == u64::MAX` (active)
+    /// - `stake > 0`
     pub stake_accounts: Vec<StakeAccountInfo>,
     /// Validator distribution summary
     pub validator_distribution: HashMap<String, ValidatorStake>,
@@ -202,7 +213,7 @@ impl From<&StakeAccountInfo> for ProductionStakeAccountInfo {
                 stake_lamports: d.stake,
                 activation_epoch: d.activation_epoch,
                 deactivation_epoch: d.deactivation_epoch,
-                credits_observed: d.credits_observed,
+                last_epoch_credits_cumulative: d.last_epoch_credits_cumulative,
             });
 
         let stake_type = if account.delegation.is_some() {
@@ -244,8 +255,8 @@ pub struct StakeDelegation {
     pub activation_epoch: u64,
     /// Epoch when stake will deactivate (`u64::MAX` if not deactivating)
     pub deactivation_epoch: u64,
-    /// Credits observed from this validator
-    pub credits_observed: u64,
+    /// Last epoch credits cumulative from this validator
+    pub last_epoch_credits_cumulative: u64,
     /// Warmup/cooldown rate
     pub warmup_cooldown_rate: f64,
 }
@@ -261,8 +272,8 @@ pub struct ProductionStakeDelegation {
     pub activation_epoch: u64,
     /// Epoch when stake will deactivate (`u64::MAX` if not deactivating)
     pub deactivation_epoch: u64,
-    /// Credits observed from this validator
-    pub credits_observed: u64,
+    /// Last epoch credits cumulative from this validator
+    pub last_epoch_credits_cumulative: u64,
 }
 
 /// Complete stake authorization (debug format)
