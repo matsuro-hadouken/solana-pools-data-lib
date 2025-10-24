@@ -1,3 +1,8 @@
+### `validator_accounts.rs`
+Show all stake accounts (open and closed) for a single validator in a pool, with full account details.
+```bash
+cargo run --example validator_accounts
+```
 ### `validator_map.rs`
 Minimal demo showing all available fields for a single pool and a single validator.
 ```bash
@@ -158,13 +163,16 @@ for pool_name in pool_list {
 ## Example Selection Guide
 
 ### **For comprehensive configuration options**
-→ `cargo run --example basic` - Essential configuration reference
+`cargo run --example basic` - Essential configuration reference
 
 ### **For complete pool analysis**
-→ `cargo run --example comprehensive`
+`cargo run --example comprehensive`
 
 ### **For library overview**
-→ `cargo run --example quick_test`
+`cargo run --example quick_test`
+
+### **For validator account mapping**
+`cargo run --example validator_accounts` - Show all stake accounts for a single validator
 
 ## Running Examples
 
@@ -173,7 +181,7 @@ All examples can be run with:
 cargo run --example <example_name>
 ```
 
-Replace `<example_name>` with any filename (without `.rs` extension).
+Replace `<example_name>` with any filename (without `.rs` extension), e.g. `validator_accounts`.
 
 ## Production Ready
 
