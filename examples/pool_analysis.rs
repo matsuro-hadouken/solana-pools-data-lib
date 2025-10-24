@@ -234,8 +234,8 @@ async fn fetch_all_validator_credits(
         .iter()
         .chain(&rpc_response.result.delinquent)
     {
-        if let Some(latest_epoch) = validator.epoch_credits.last() {
-            credits_map.insert(validator.vote_pubkey.clone(), latest_epoch.1);
+        if let Some(&( _epoch, cum, prev )) = validator.epoch_credits.last() {
+            credits_map.insert(validator.vote_pubkey.clone(), cum.saturating_sub(prev));
         }
     }
 
