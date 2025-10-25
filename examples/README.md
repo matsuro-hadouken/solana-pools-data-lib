@@ -1,3 +1,13 @@
+### `all_pools_statistics.rs`
+Analyze all pools: prints active, deactivating, and fully deactivated stake for every pool, with total lamports and account counts.
+```bash
+cargo run --example all_pools_statistics
+```
+
+# Examples
+
+## Available Examples
+
 ### `validator_accounts.rs`
 Show all stake accounts (open and closed) for a single validator in a pool, with full account details.
 ```bash
@@ -8,9 +18,6 @@ Minimal demo showing all available fields for a single pool and a single validat
 ```bash
 cargo run --example validator_map
 ```
-# Examples
-
-## Available Examples
 
 ### `rpc_configuration.rs`
 Comprehensive RPC configuration guide for all providers and use cases:
@@ -162,16 +169,19 @@ for pool_name in pool_list {
 
 ## Example Selection Guide
 
-### **For comprehensive configuration options**
+### For all pools statistics and stake breakdown
+`cargo run --example all_pools_statistics`
+
+### For comprehensive configuration options
 `cargo run --example basic` - Essential configuration reference
 
-### **For complete pool analysis**
+### For complete pool analysis
 `cargo run --example comprehensive`
 
-### **For library overview**
+### For library overview
 `cargo run --example quick_test`
 
-### **For validator account mapping**
+### For validator account mapping
 `cargo run --example validator_accounts` - Show all stake accounts for a single validator
 
 ## Running Examples

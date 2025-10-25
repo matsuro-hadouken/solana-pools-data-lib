@@ -85,6 +85,6 @@ for (pool_name, pool_data) in &debug_result.successful {
 
 ## Next Steps
 
-- **See working examples**: `cargo run --example basic`
+- **See working examples**: `cargo run --example <example>`
 - **Read integration patterns**: [INTEGRATION.md](INTEGRATION.md)
 - **Configuration options**: [examples/README.md](examples/README.md)

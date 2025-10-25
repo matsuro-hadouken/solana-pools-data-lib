@@ -273,7 +273,8 @@ for batch in pool_names.chunks(3) {
 }
 ```
 
-## Examples
+
+# Examples
 
 Run these examples to see the library in action:
 
@@ -283,6 +284,9 @@ cargo run --example quick_test
 
 # Complete configuration reference
 cargo run --example basic
+
+# All pools statistics and stake breakdown
+cargo run --example all_pools_statistics
 
 # All 32 pools
 cargo run --example comprehensive

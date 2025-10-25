@@ -259,6 +259,9 @@ cargo run --example basic
 # Quick library overview
 cargo run --example quick_test
 
+# Pool statistics and stake breakdown
+cargo run --example all_pools_statistics
+
 # Production batch processing
 cargo run --example comprehensive
 
