@@ -27,22 +27,25 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .and_then(PoolsDataClient::from_config)?;
 
     for (index, pool_info) in available_pools.iter().enumerate() {
-        println!(
-            "{}/{}: Fetching {}...",
-            index + 1,
-            available_pools.len(),
-            pool_info.name
-        );
-
-        match client.fetch_pools(&[&pool_info.name]).await {
+    println!("{}/{}: Fetching {}...", index + 1, available_pools.len(), pool_info.name);
+    match client.fetch_pools(&[&pool_info.name]).await {
             Ok(pools) => {
                 if let Some((_name, data)) = pools.iter().next() {
                     successful += 1;
+                    let stats = &data.statistics;
                     println!(
-                        "   Success: {} validators, {} accounts, {:.0} SOL",
+                        "   Success: validators={}, total_accounts={}, active_accounts={}, deactivating_accounts={}, deactivated_accounts={}, total_lamports={}, active_stake_lamports={}, deactivating_stake_lamports={}, deactivated_stake_lamports={}, validator_count={}, active_stake_SOL={:.2}",
                         data.validator_distribution.len(),
-                        data.stake_accounts.len(),
-                        data.statistics.total_staked_lamports as f64 / 1e9
+                        stats.total_accounts,
+                        stats.active_accounts,
+                        stats.deactivating_accounts,
+                        stats.deactivated_accounts,
+                        stats.total_lamports,
+                        stats.active_stake_lamports,
+                        stats.deactivating_stake_lamports,
+                        stats.deactivated_stake_lamports,
+                        stats.validator_count,
+                        stats.active_stake_lamports as f64 / 1e9
                     );
                 }
             }

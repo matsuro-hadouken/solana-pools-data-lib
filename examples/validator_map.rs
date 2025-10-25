@@ -28,9 +28,9 @@ fn main() {
             println!("  Pool Statistics:");
             println!("    Total Accounts: {}", pool.statistics.total_accounts);
             println!("    Total Lamports: {}", pool.statistics.total_lamports);
-            println!("    Total Staked Lamports: {}", pool.statistics.total_staked_lamports);
-            println!("    Active Stake Accounts: {}", pool.statistics.active_stake_accounts);
-            println!("    Deactivating Stake Accounts: {}", pool.statistics.deactivating_stake_accounts);
+            println!("    Total Staked Lamports: {}", pool.statistics.active_stake_lamports);
+            println!("    Active Stake Accounts: {}", pool.statistics.active_accounts);
+            println!("    Deactivating Stake Accounts: {}", pool.statistics.deactivating_accounts);
             println!("    Validator Count: {}", pool.statistics.validator_count);
 
             // Find the first stake account with a delegation

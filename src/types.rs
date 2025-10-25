@@ -1,10 +1,52 @@
-//! Cle/// Complete result from fetching multiple pools (debug format) data types for stake pool information.
-
 use crate::error::PoolError;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Calculate pool statistics from stake accounts and current epoch
+#[must_use]
+pub fn calculate_pool_statistics(stake_accounts: &[StakeAccountInfo], current_epoch: u64) -> PoolStatistics {
+    let mut total_accounts = 0;
+    let mut active_accounts = 0;
+    let mut deactivating_accounts = 0;
+    let mut deactivated_accounts = 0;
+    let mut active_stake_lamports: u64 = 0;
+    let mut deactivating_stake_lamports: u64 = 0;
+    let mut deactivated_stake_lamports: u64 = 0;
+    let mut total_lamports: u64 = 0;
+    let mut validator_set = std::collections::HashSet::new();
+
+    for account in stake_accounts {
+        total_lamports += account.lamports;
+        if let Some(delegation) = &account.delegation {
+            total_accounts += 1;
+            validator_set.insert(&delegation.voter);
+            if delegation.deactivation_epoch == u64::MAX {
+                active_accounts += 1;
+                active_stake_lamports += delegation.stake;
+            } else if delegation.deactivation_epoch > current_epoch {
+                deactivating_accounts += 1;
+                deactivating_stake_lamports += delegation.stake;
+            } else if delegation.deactivation_epoch <= current_epoch {
+                deactivated_accounts += 1;
+                deactivated_stake_lamports += delegation.stake;
+            }
+        }
+    }
+
+    PoolStatistics {
+        total_accounts,
+        active_accounts,
+        deactivating_accounts,
+        deactivated_accounts,
+        total_lamports,
+        active_stake_lamports,
+        deactivating_stake_lamports,
+        deactivated_stake_lamports,
+        validator_count: validator_set.len(),
+    }
+}
+/// Complete result from fetching multiple pools (debug format) data types for stake pool information.
 /// Complete result from fetching multiple pools (debug format)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PoolsDataResult {
@@ -367,14 +409,20 @@ impl Default for ValidatorStake {
 pub struct PoolStatistics {
     /// Total number of stake accounts
     pub total_accounts: usize,
-    /// Total lamports across all accounts
-    pub total_lamports: u64,
-    /// Total delegated stake lamports
-    pub total_staked_lamports: u64,
     /// Number of active stake accounts
-    pub active_stake_accounts: usize,
+    pub active_accounts: usize,
     /// Number of deactivating stake accounts
-    pub deactivating_stake_accounts: usize,
+    pub deactivating_accounts: usize,
+    /// Number of fully deactivated stake accounts
+    pub deactivated_accounts: usize,
+    /// Total lamports in all stake accounts
+    pub total_lamports: u64,
+    /// Total active stake (lamports)
+    pub active_stake_lamports: u64,
+    /// Total deactivating stake (lamports)
+    pub deactivating_stake_lamports: u64,
+    /// Total fully deactivated stake (lamports)
+    pub deactivated_stake_lamports: u64,
     /// Number of unique validators
     pub validator_count: usize,
 }

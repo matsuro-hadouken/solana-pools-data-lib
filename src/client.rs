@@ -1,5 +1,54 @@
-//! Client for fetching pools data.
-
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{StakeDelegation, StakeAuthorized, StakeLockup};
+    #[test]
+    fn test_calculate_pool_statistics_basic() {
+        let stake_accounts = vec![
+                StakeAccountInfo {
+                    pubkey: "account1".to_string(),
+                lamports: 1000,
+                rent_exempt_reserve: 0,
+                delegation: Some(StakeDelegation {
+                    voter: "validator1".to_string(),
+                    stake: 1000,
+                    activation_epoch: 1,
+                    deactivation_epoch: u64::MAX,
+                    last_epoch_credits_cumulative: 0,
+                    warmup_cooldown_rate: 0.25,
+                }),
+                authorized: StakeAuthorized { staker: "staker1".to_string(), withdrawer: "withdrawer1".to_string() },
+                lockup: StakeLockup { unix_timestamp: 0, epoch: 0, custodian: "".to_string() },
+            },
+            StakeAccountInfo {
+                pubkey: "account2".to_string(),
+                lamports: 2000,
+                rent_exempt_reserve: 0,
+                delegation: Some(StakeDelegation {
+                    voter: "validator2".to_string(),
+                    stake: 2000,
+                    activation_epoch: 1,
+                    deactivation_epoch: 10,
+                    last_epoch_credits_cumulative: 0,
+                    warmup_cooldown_rate: 0.25,
+                }),
+                authorized: StakeAuthorized { staker: "staker2".to_string(), withdrawer: "withdrawer2".to_string() },
+                lockup: StakeLockup { unix_timestamp: 0, epoch: 0, custodian: "".to_string() },
+            },
+        ];
+        let stats = PoolsDataClient::calculate_pool_statistics(&stake_accounts);
+        assert_eq!(stats.total_accounts, 2);
+        assert_eq!(stats.active_accounts, 1);
+        assert_eq!(stats.deactivating_accounts, 1);
+        assert_eq!(stats.deactivated_accounts, 0);
+        assert_eq!(stats.total_lamports, 3000);
+        assert_eq!(stats.active_stake_lamports, 1000);
+        assert_eq!(stats.deactivating_stake_lamports, 2000);
+        assert_eq!(stats.deactivated_stake_lamports, 0);
+        assert_eq!(stats.validator_count, 2);
+    }
+}
+/// Client for fetching pools data.
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -307,42 +356,45 @@ impl PoolsDataClient {
 
     /// Calculate pool statistics
     fn calculate_pool_statistics(stake_accounts: &[StakeAccountInfo]) -> PoolStatistics {
-        let total_accounts = stake_accounts.len();
-        let total_lamports = stake_accounts.iter().map(|a| a.lamports).sum();
-        let total_staked_lamports = stake_accounts
-            .iter()
-            .filter_map(|a| a.delegation.as_ref().map(|d| d.stake))
-            .sum();
+        let mut total_accounts = 0;
+        let mut active_accounts = 0;
+        let mut deactivating_accounts = 0;
+        let mut deactivated_accounts = 0;
+        let mut active_stake_lamports: u64 = 0;
+        let mut deactivating_stake_lamports: u64 = 0;
+        let mut deactivated_stake_lamports: u64 = 0;
+        let mut total_lamports: u64 = 0;
+        let mut validator_set = std::collections::HashSet::new();
 
-        let active_stake_accounts = stake_accounts
-            .iter()
-            .filter(|a| {
-                a.delegation.is_some()
-                    && a.delegation.as_ref().unwrap().deactivation_epoch == u64::MAX
-            })
-            .count();
-
-        let deactivating_stake_accounts = stake_accounts
-            .iter()
-            .filter(|a| {
-                a.delegation.is_some()
-                    && a.delegation.as_ref().unwrap().deactivation_epoch != u64::MAX
-            })
-            .count();
-
-        let validator_count = stake_accounts
-            .iter()
-            .filter_map(|a| a.delegation.as_ref().map(|d| &d.voter))
-            .collect::<std::collections::HashSet<_>>()
-            .len();
+        // For now, assume current_epoch is not available here, so treat deactivation_epoch == u64::MAX as active, else deactivating or deactivated
+            for account in stake_accounts {
+            total_lamports += account.lamports;
+            if let Some(delegation) = &account.delegation {
+                total_accounts += 1;
+                validator_set.insert(&delegation.voter);
+                if delegation.deactivation_epoch == u64::MAX {
+                    active_accounts += 1;
+                    active_stake_lamports += delegation.stake;
+                } else if delegation.deactivation_epoch > 0 {
+                    deactivating_accounts += 1;
+                    deactivating_stake_lamports += delegation.stake;
+                } else {
+                    deactivated_accounts += 1;
+                    deactivated_stake_lamports += delegation.stake;
+                }
+            }
+        }
 
         PoolStatistics {
             total_accounts,
+            active_accounts,
+            deactivating_accounts,
+            deactivated_accounts,
             total_lamports,
-            total_staked_lamports,
-            active_stake_accounts,
-            deactivating_stake_accounts,
-            validator_count,
+            active_stake_lamports,
+            deactivating_stake_lamports,
+            deactivated_stake_lamports,
+            validator_count: validator_set.len(),
         }
     }
 }

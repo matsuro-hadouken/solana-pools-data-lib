@@ -126,7 +126,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             );
             println!(
                 "     Total staked: {:.2} SOL",
-                data.statistics.total_staked_lamports as f64 / 1e9
+                data.statistics.active_stake_lamports as f64 / 1e9
             );
         }
         Err(e) => println!("     Error: {}", e),
@@ -148,7 +148,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 );
                 println!(
                     "     Total staked: {:.2} SOL",
-                    data.statistics.total_staked_lamports as f64 / 1e9
+                    data.statistics.active_stake_lamports as f64 / 1e9
                 );
 
                 // Show the actual data structure difference

@@ -46,7 +46,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 println!("   Validators: {}", pool_data.validator_distribution.len());
                 println!(
                     "   Total Staked: {:.2} SOL",
-                    pool_data.statistics.total_staked_lamports as f64 / 1_000_000_000.0
+                    pool_data.statistics.active_stake_lamports as f64 / 1_000_000_000.0
                 );
 
                 // Show top validators
