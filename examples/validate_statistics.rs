@@ -1,8 +1,7 @@
-use solana_pools_data_lib::PoolsDataClient;
-use std::error::Error;
+use solana_pools_data_lib::*;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<()> {
     // Engineers must fetch current_epoch from RPC or other source
     let rpc_url = "https://api.mainnet-beta.solana.com";
     let current_epoch = fetch_current_epoch(rpc_url).await?;
@@ -19,14 +18,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         for validator in &stats.validators {
             println!("  Validator: {}", validator.validator_pubkey);
             for account in &validator.accounts {
-                println!("    Account: {} | State: {:?} | Lamports: {}", account.account_pubkey, account.account_state, account.account_size_in_lamports);
+                println!("    Account: {} | State: {:?} | SOL: {}", account.account_pubkey, account.account_state, (account.account_size_in_lamports as f64 / 1_000_000_000.0));
             }
         }
     }
     Ok(())
 }
 
-async fn fetch_current_epoch(rpc_url: &str) -> Result<u64, Box<dyn Error>> {
+async fn fetch_current_epoch(rpc_url: &str) -> Result<u64> {
     let client = reqwest::Client::new();
     let body = serde_json::json!({
         "jsonrpc": "2.0",
@@ -36,6 +35,6 @@ async fn fetch_current_epoch(rpc_url: &str) -> Result<u64, Box<dyn Error>> {
     });
     let resp = client.post(rpc_url).json(&body).send().await?;
     let resp_json: serde_json::Value = resp.json().await?;
-    let epoch = resp_json["result"]["epoch"].as_u64().ok_or("No epoch in response")?;
+    let epoch = resp_json["result"]["epoch"].as_u64().ok_or_else(|| PoolsDataError::ParseError { message: "No epoch in response".to_string() })?;
     Ok(epoch)
 }
