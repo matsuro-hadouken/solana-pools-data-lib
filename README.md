@@ -1,10 +1,3 @@
-# What's New (2025-10)
-
-- Canonical stake account state classification (Active, Activating, Deactivating, Inactive, Waste, Unknown)
-- All pool/validator/account statistics are pre-calculated and returned from the API
-- Canonical state logic and edge case detection (matches Solana protocol)
-- Struct hierarchy: `PoolStatisticsFull`, `ValidatorStatisticsFull`, `AccountStatisticsFull` (full details for engineers)
-- Validation and research scripts for output auditing and integration
 
 # Pools Data Library
 
