@@ -11,6 +11,7 @@ pub struct PoolStatisticsSummary {
 }
 
 impl PoolStatisticsFull {
+    #[must_use]
     pub fn summary(&self) -> PoolStatisticsSummary {
         use crate::statistics::StakeState;
         let mut summary = PoolStatisticsSummary::default();

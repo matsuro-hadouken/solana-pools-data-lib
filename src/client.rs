@@ -83,7 +83,7 @@ impl PoolsDataClient {
         // Validate epoch
         if current_epoch == 0 || current_epoch == u64::MAX || current_epoch > 10_000_000_000 {
             return Err(crate::error::PoolsDataError::InternalError {
-                message: format!("Invalid current_epoch passed to fetch_all_pools_with_stats: {}", current_epoch),
+                message: format!("Invalid current_epoch passed to fetch_all_pools_with_stats: {current_epoch}"),
             });
         }
         let all_pools = crate::pools::get_all_pools();
@@ -91,7 +91,7 @@ impl PoolsDataClient {
         let pools = self.fetch_pools(&pool_names).await?;
         let mut result = std::collections::HashMap::new();
         for (pool_name, pool) in &pools {
-            let stats = statistics_calc::calculate_pool_statistics_full(pool, current_epoch);
+            let stats = statistics_calc::calculate_pool_statistics_full(pool, current_epoch)?;
             result.insert(pool_name.clone(), stats);
         }
         Ok(result)

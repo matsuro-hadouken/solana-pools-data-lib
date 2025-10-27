@@ -38,6 +38,9 @@ mod types;
 pub mod statistics;
 pub mod statistics_calc;
 
+#[cfg(test)]
+mod statistics_calc_tests;
+
 pub use client::*;
 pub use config::*;
 pub use error::*;

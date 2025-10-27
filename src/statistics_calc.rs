@@ -3,17 +3,26 @@
 
 use crate::statistics::{AccountStatisticsFull, ValidatorStatisticsFull, PoolStatisticsFull, classify_stake_state};
 use crate::types::ProductionPoolData;
+use crate::error::PoolsDataError;
 
 /// Calculate canonical pool statistics, grouping by validator and account state
 /// Clippy pedantic/nursery compliant
-#[must_use]
-pub fn calculate_pool_statistics_full(pool: &ProductionPoolData, current_epoch: u64) -> PoolStatisticsFull {
+///
+/// # Errors
+/// Returns `PoolsDataError::ConfigurationError` if pool name or authority is empty.
+pub fn calculate_pool_statistics_full(pool: &ProductionPoolData, current_epoch: u64) -> Result<PoolStatisticsFull, PoolsDataError> {
+    if pool.pool_name.trim().is_empty() {
+        return Err(PoolsDataError::ConfigurationError { message: "Pool name is empty".to_string() });
+    }
+    if pool.authority.trim().is_empty() {
+        return Err(PoolsDataError::ConfigurationError { message: "Pool authority is empty".to_string() });
+    }
+    // stake_accounts cannot be None, but can be empty
     let mut validator_map = std::collections::HashMap::<String, Vec<AccountStatisticsFull>>::new();
     for account in &pool.stake_accounts {
         let delegation = account.delegation.as_ref();
         let state = classify_stake_state(delegation, current_epoch);
-        // Use explicit empty string for non-delegated accounts
-            let validator_pubkey = delegation.map_or_else(String::new, |d| d.validator.clone());
+        let validator_pubkey = delegation.map_or_else(String::new, |d| d.validator.clone());
         let account_stats = AccountStatisticsFull {
             account_pubkey: account.pubkey.clone(),
             account_state: state,
@@ -35,8 +44,8 @@ pub fn calculate_pool_statistics_full(pool: &ProductionPoolData, current_epoch: 
             accounts,
         })
         .collect();
-    PoolStatisticsFull {
+    Ok(PoolStatisticsFull {
         pool_name: pool.pool_name.clone(),
         validators,
-    }
+    })
 }
