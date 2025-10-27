@@ -1,5 +1,4 @@
 use solana_pools_data_lib::*;
-// ...existing code...
 
 #[tokio::main]
 async fn main() -> solana_pools_data_lib::Result<()> {
@@ -17,10 +16,10 @@ async fn main() -> solana_pools_data_lib::Result<()> {
         println!("  Active Accounts: {}", stats.summary().active_accounts);
         println!("  Deactivating Accounts: {}", stats.summary().deactivating_accounts);
         println!("  Deactivated Accounts: {}", stats.summary().deactivated_accounts);
-        println!("  Total Lamports: {}", stats.summary().total_lamports);
-        println!("  Active Stake Lamports: {}", stats.summary().active_stake_lamports);
-        println!("  Deactivating Stake Lamports: {}", stats.summary().deactivating_stake_lamports);
-        println!("  Deactivated Stake Lamports: {}", stats.summary().deactivated_stake_lamports);
+        println!("  Total SOL: {}", stats.summary().total_lamports as f64 / 1_000_000_000.0);
+        println!("  Active Stake SOL: {}", stats.summary().active_stake_lamports as f64 / 1_000_000_000.0);
+        println!("  Deactivating Stake SOL: {}", stats.summary().deactivating_stake_lamports as f64 / 1_000_000_000.0);
+        println!("  Deactivated Stake SOL: {}", stats.summary().deactivated_stake_lamports as f64 / 1_000_000_000.0);
     println!("  Validator Count: {}", stats.validators.len());
 
         // Print first validator and first account for demo
@@ -29,10 +28,10 @@ async fn main() -> solana_pools_data_lib::Result<()> {
             if let Some(account) = vstat.accounts.first() {
                 println!("    Account: {}", account.account_pubkey);
                 println!("      State: {:?}", account.account_state);
-                println!("      Lamports: {}", account.account_size_in_lamports);
-                println!("      Activation Epoch: {:?}", account.activation_epoch);
-                println!("      Deactivation Epoch: {:?}", account.deactivation_epoch);
-                println!("      Authority: staker={:?}, withdrawer={:?}", account.authorized_staker, account.authorized_withdrawer);
+                println!("      SOL: {}", account.account_size_in_lamports as f64 / 1_000_000_000.0);
+                println!("      Activation Epoch: {:?}", account.activation_epoch.unwrap_or_default());
+                println!("      Deactivation Epoch: {:?}", account.deactivation_epoch.unwrap_or_default());
+                println!("      Authority: staker={:?}, withdrawer={:?}", account.authorized_staker.clone().unwrap_or_default(), account.authorized_withdrawer.clone().unwrap_or_default());
             }
         }
     } else {
