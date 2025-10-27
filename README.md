@@ -5,7 +5,7 @@ Rust library for fetching Solana stake pools data. Supports production and debug
 
 ## Features
 - Canonical pool, validator, and account statistics calculated in-library and returned from API
-- 32 supported pools (Jito, Marinade, Lido, etc.)
+- 31 supported pools (Jito, Marinade, Lido, etc.)
 - Rate limiting, retries, timeouts, provider presets
 
 ## Data Returned
@@ -13,12 +13,17 @@ Rust library for fetching Solana stake pools data. Supports production and debug
   - `pool_name`: Pool name
   - `authority`: Pool authority pubkey
   - `stake_accounts`: List of stake accounts (optimized)
-  - `validator_distribution`: Validator summary
+  - `validator_distribution`: Validator summary (includes aggregated validator credits)
   - `statistics`: Pre-calculated pool statistics (canonical state logic, all account/validator states, edge case detection)
   - `fetched_at`: Timestamp
-- **PoolStatisticsFull / ValidatorStatisticsFull / AccountStatisticsFull**:
-  - All canonical state counts and lamports (active, activating, deactivating, inactive, waste, unknown)
-  - Full validator and account breakdowns for engineering and analytics
+- **PoolStatisticsFull**:
+  - Canonical state counts and lamports for the pool (active, activating, deactivating, inactive, waste, unknown)
+- **ValidatorStatisticsFull**:
+  - Canonical state counts and lamports for each validator
+  - Aggregated validator credits (total credits earned by each validator)
+- **AccountStatisticsFull**:
+  - Canonical state counts and lamports for each account
+  - (Note: credits are not reported at the account level)
 - **PoolsDataResult** (debug):
   - `successful`: Map of pool name to full pool data
   - `failed`: Map of pool name to error
