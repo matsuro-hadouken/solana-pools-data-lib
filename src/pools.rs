@@ -30,26 +30,13 @@ impl PoolInfo {
 static POOLS_REGISTRY: Lazy<Vec<PoolInfo>> = Lazy::new(|| {
     vec![
         PoolInfo::new("foundation", "mpa4abUkjQoAvPzREkh5Mo75hZhPFQ2FSH6w7dWKuQ5"),
-        PoolInfo::new(
-            "firedancer_delegation",
-            "FiRep26iRQbMaKbqhhs5CqXqy7YrHn462LbnQhXzB2ps",
-        ),
-        PoolInfo::new(
-            "double_zero",
-            "4cpnpiwgBfUgELVwNYiecwGti45YHSH3R72CPkFTiwJt",
-        ),
+        PoolInfo::new("firedancer_delegation", "FiRep26iRQbMaKbqhhs5CqXqy7YrHn462LbnQhXzB2ps",),
+        PoolInfo::new("double_zero", "4cpnpiwgBfUgELVwNYiecwGti45YHSH3R72CPkFTiwJt",),
         PoolInfo::new("jpool", "HbJTxftxnXgpePCshA8FubsRj9MW4kfPscfuUfn44fnt"),
-        PoolInfo::new("raydium", "4qD717qKoj3Sm8YfHMSR7tSKjWn5An817nArA6nGdcUR"),
         PoolInfo::new("jito", "6iQKfEyhr3bZMotVkW6beNZz5CPAkiwvgV2CTje9pVSS"),
         PoolInfo::new("marinade", "4bZ6o3eUUNXhKuqjdCnCoPAoLgWiuLYixKaxoa8PpiKk"),
-        PoolInfo::new(
-            "marinade_native",
-            "ex9CfkBZZd6Nv9XdnoDmmB45ymbu4arXVk7g5pWnt3N",
-        ),
-        PoolInfo::new(
-            "marinade_native_2",
-            "stWirqFCf2Uts1JBL1Jsd3r6VBWhgnpdPxCTe1MFjrq",
-        ),
+        PoolInfo::new("marinade_native", "ex9CfkBZZd6Nv9XdnoDmmB45ymbu4arXVk7g5pWnt3N",),
+        PoolInfo::new("marinade_native_2", "stWirqFCf2Uts1JBL1Jsd3r6VBWhgnpdPxCTe1MFjrq",),
         PoolInfo::new("socean", "AzZRvyyMHBm8EHEksWxq4ozFL7JxLMydCDMGhqM6BVck"),
         PoolInfo::new("lido", "W1ZQRwUfSkDKy2oefRBUWph82Vr2zg9txWMA8RQazN5"),
         PoolInfo::new("eversol", "C4NeuptywfXuyWB9A7H7g5jHVDE8L6Nj2hS53tA71KPn"),
