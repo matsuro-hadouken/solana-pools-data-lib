@@ -60,7 +60,6 @@ pub struct AccountStatisticsFull {
     pub validator_pubkey: String,
     pub activation_epoch: Option<u64>,
     pub deactivation_epoch: Option<u64>,
-    pub last_epoch_credits_cumulative: Option<u64>,
     pub rent_exempt_reserve: Option<u64>,
     pub authorized_staker: Option<String>,
     pub authorized_withdrawer: Option<String>,
@@ -70,6 +69,7 @@ pub struct AccountStatisticsFull {
 pub struct ValidatorStatisticsFull {
     pub validator_pubkey: String,
     pub accounts: Vec<AccountStatisticsFull>,
+    pub last_epoch_credits_cumulative: Option<u64>,
 }
 
 #[derive(Debug, Clone)]

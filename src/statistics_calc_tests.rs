@@ -2,6 +2,39 @@
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn test_error_empty_pool_name() {
+        use crate::types::ProductionPoolData;
+        use crate::types::PoolStatistics;
+        use std::collections::HashMap;
+        let pool = ProductionPoolData {
+            pool_name: "".to_string(),
+            authority: "testauth".to_string(),
+            stake_accounts: vec![],
+            validator_distribution: HashMap::new(),
+            statistics: PoolStatistics::default(),
+            fetched_at: chrono::Utc::now(),
+        };
+        let result = crate::statistics_calc::calculate_pool_statistics_full(&pool, 1);
+        assert!(matches!(result, Err(crate::error::PoolsDataError::ConfigurationError { .. })), "Expected ConfigurationError for empty pool name");
+    }
+
+    #[test]
+    fn test_error_empty_authority() {
+        use crate::types::ProductionPoolData;
+        use crate::types::PoolStatistics;
+        use std::collections::HashMap;
+        let pool = ProductionPoolData {
+            pool_name: "testpool".to_string(),
+            authority: "".to_string(),
+            stake_accounts: vec![],
+            validator_distribution: HashMap::new(),
+            statistics: PoolStatistics::default(),
+            fetched_at: chrono::Utc::now(),
+        };
+        let result = crate::statistics_calc::calculate_pool_statistics_full(&pool, 1);
+        assert!(matches!(result, Err(crate::error::PoolsDataError::ConfigurationError { .. })), "Expected ConfigurationError for empty authority");
+    }
     use crate::statistics_calc::calculate_pool_statistics_full;
     use crate::types::ProductionPoolData;
     use crate::types::PoolStatistics;
