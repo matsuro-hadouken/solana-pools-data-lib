@@ -1,9 +1,17 @@
+# What's New (2025-10)
+
+- Canonical stake account state classification (Active, Activating, Deactivating, Inactive, Waste, Unknown)
+- All pool/validator/account statistics are pre-calculated and returned from the API
+- Canonical state logic and edge case detection (matches Solana protocol)
+- Struct hierarchy: `PoolStatisticsFull`, `ValidatorStatisticsFull`, `AccountStatisticsFull` (full details for engineers)
+- Validation and research scripts for output auditing and integration
+
 # Pools Data Library
 
 Rust library for fetching Solana stake pools data. Supports production and debug formats, automatic RPC configuration, and all major pools.
 
 ## Features
-- Pool statistics calculated in-library, returned from API
+- Canonical pool, validator, and account statistics calculated in-library and returned from API
 - 32 supported pools (Jito, Marinade, Lido, etc.)
 - Rate limiting, retries, timeouts, provider presets
 
@@ -13,12 +21,11 @@ Rust library for fetching Solana stake pools data. Supports production and debug
   - `authority`: Pool authority pubkey
   - `stake_accounts`: List of stake accounts (optimized)
   - `validator_distribution`: Validator summary
-  - `statistics`: Pre-calculated pool statistics (active/deactivating/deactivated accounts, total lamports, validator count, etc.)
+  - `statistics`: Pre-calculated pool statistics (canonical state logic, all account/validator states, edge case detection)
   - `fetched_at`: Timestamp
-- **PoolStatistics**:
-  - `total_accounts`, `active_accounts`, `deactivating_accounts`, `deactivated_accounts`
-  - `total_lamports`, `active_stake_lamports`, `deactivating_stake_lamports`, `deactivated_stake_lamports`
-  - `validator_count`
+- **PoolStatisticsFull / ValidatorStatisticsFull / AccountStatisticsFull**:
+  - All canonical state counts and lamports (active, activating, deactivating, inactive, waste, unknown)
+  - Full validator and account breakdowns for engineering and analytics
 - **PoolsDataResult** (debug):
   - `successful`: Map of pool name to full pool data
   - `failed`: Map of pool name to error
@@ -32,6 +39,11 @@ Rust library for fetching Solana stake pools data. Supports production and debug
 - `PoolsDataClient::fetch_pools(pool_names)` - Returns production data for specified pools. All statistics are pre-calculated
 - `PoolsDataClient::fetch_all_pools()` - Returns production data for all supported pools
 - `PoolsDataClient::fetch_pools_debug(pool_names)` - Returns full debug data for specified pools, including all raw RPC fields
+
+## Canonical Usage Note
+
+**Always pass `current_epoch` to the library for canonical state classification and statistics.**
+Fetch it from RPC to ensure all stake/account states are calculated correctly for the current epoch. This is required for all canonical examples and production usage.
 
 ## Installation
 ```toml

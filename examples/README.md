@@ -1,16 +1,18 @@
 # Examples Reference
 
-All examples demonstrate direct usage of the Solana Pools Data Library. Each example is self-contained and covers a specific technical scenario.
+All examples demonstrate direct usage of the Solana Pools Data Library. Each example is self-contained and covers a specific technical scenario. All calculations, state classification, and statistics are performed inside the library—examples never re-implement math or logic.
 
 ## Example List
 
-- `basic.rs` — Show configuration patterns: rate limiting, timeouts, retries, concurrency.
-- `quick_test.rs` — Run a quick library test and print supported pools.
-- `comprehensive.rs` — Fetch and print data for all supported pools.
-- `validator_accounts.rs` — List all stake accounts (open/closed) for a single validator in a pool, with full account details.
-- `validator_map.rs` — Show all available fields for a single pool and validator.
-- `all_pools_statistics.rs` — Print active, deactivating, and deactivated stake, total lamports, and account counts for all pools.
-- `rpc_configuration.rs` — Demonstrate all RPC configuration options and presets.
+- `basic.rs` — Show configuration patterns: rate limiting, timeouts, retries, concurrency. No manual math.
+- `quick_test.rs` — Run a quick library test and print supported pools. No manual math.
+- `comprehensive.rs` — Fetch and print data for all supported pools. No manual math.
+- `validator_accounts.rs` — List all stake accounts (open/closed) for a single validator in a pool, with full account details. No manual math.
+- `validator_map.rs` — Show all available fields for a single pool and validator. No manual math.
+- `all_pools_statistics.rs` — Print active, deactivating, deactivated stake, total lamports, and account counts for all pools. All statistics are from the library.
+- `rpc_configuration.rs` — Demonstrate all RPC configuration options and presets. No manual math.
+- `validate_statistics.rs` — Validate and print all canonical statistics and account states for all pools and validators. Uses only library-calculated data.
+- `research_account_states.rs` — Research and audit stake account state classification and edge cases. (For research/validation, may duplicate logic for audit purposes.)
 
 ## Configuration Reference
 
@@ -45,4 +47,4 @@ Replace `<example_name>` with the filename (without `.rs`).
 - Configure base delay and max attempts as needed.
 
 ## Output
-All examples print structured pool data, statistics, and configuration results directly to stdout.
+All examples print structured pool data, statistics, and configuration results directly to stdout. All statistics and state logic are calculated inside the library.

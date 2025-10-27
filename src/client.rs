@@ -63,6 +63,9 @@ use crate::types::{
     FieldAnalysis, PoolData, PoolStatistics, PoolsDataResult, ProductionPoolData, StakeAccountInfo,
     ValidatorStake,
 };
+// Use absolute path for modules in src/
+use crate::statistics;
+use crate::statistics_calc;
 
 /// Main client for fetching Solana pools data
 pub struct PoolsDataClient {
@@ -72,6 +75,27 @@ pub struct PoolsDataClient {
 }
 
 impl PoolsDataClient {
+    /// Fetch all pools and return canonical statistics for each pool, grouped by validator and account state
+    /// Does not affect legacy API. Accepts `current_epoch` for correct state classification.
+    /// # Errors
+    /// Returns an error if pool statistics cannot be fetched or calculated.
+    pub async fn fetch_all_pools_with_stats(&self, current_epoch: u64) -> Result<std::collections::HashMap<String, statistics::PoolStatisticsFull>> {
+        // Validate epoch
+        if current_epoch == 0 || current_epoch == u64::MAX || current_epoch > 10_000_000_000 {
+            return Err(crate::error::PoolsDataError::InternalError {
+                message: format!("Invalid current_epoch passed to fetch_all_pools_with_stats: {}", current_epoch),
+            });
+        }
+        let all_pools = crate::pools::get_all_pools();
+        let pool_names: Vec<&str> = all_pools.iter().map(|p| p.name.as_str()).collect();
+        let pools = self.fetch_pools(&pool_names).await?;
+        let mut result = std::collections::HashMap::new();
+        for (pool_name, pool) in &pools {
+            let stats = statistics_calc::calculate_pool_statistics_full(pool, current_epoch);
+            result.insert(pool_name.clone(), stats);
+        }
+        Ok(result)
+    }
     /// Create a new client builder
     #[must_use]
     pub fn builder() -> PoolsDataClientBuilder {

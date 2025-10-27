@@ -1,58 +1,61 @@
 use solana_pools_data_lib::*;
 // ...existing code...
 
-fn main() {
-    // Use a runtime for async client
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async {
-        // Build client (adjust RPC URL as needed)
-        let client = PoolsDataClient::builder()
-            .rate_limit(5)
-            .timeout(10)
-            .retry_attempts(3)
-            .retry_base_delay(2000)
-            .max_concurrent_requests(5)
-            .build("https://api.mainnet-beta.solana.com")
-            .and_then(PoolsDataClient::from_config)
-            .expect("Failed to build client");
+#[tokio::main]
+async fn main() -> solana_pools_data_lib::Result<()> {
+    let rpc_url = "https://api.mainnet-beta.solana.com";
+    let current_epoch = fetch_current_epoch(rpc_url).await?;
 
-        // Choose pools to fetch (e.g., just "jito" for demo)
-        let pool_names = vec!["jito"];
-        let pools = client.fetch_pools(&pool_names).await.expect("Fetch failed");
+    // PoolsDataClient autodetects RPC type and configures optimal settings
+    let config = PoolsDataClientBuilder::new().build(rpc_url)?;
+    let client = PoolsDataClient::from_config(config)?;
 
-        // Print only the first pool and first stake account with delegation, showing all available fields
-        if let Some(pool) = pools.values().next() {
-            println!("Pool: {}", pool.pool_name);
-            println!("  Authority: {}", pool.authority);
-            println!("  Fetched At: {}", pool.fetched_at);
-            println!("  Pool Statistics:");
-            println!("    Total Accounts: {}", pool.statistics.total_accounts);
-            println!("    Total Lamports: {}", pool.statistics.total_lamports);
-            println!("    Total Staked Lamports: {}", pool.statistics.active_stake_lamports);
-            println!("    Active Stake Accounts: {}", pool.statistics.active_accounts);
-            println!("    Deactivating Stake Accounts: {}", pool.statistics.deactivating_accounts);
-            println!("    Validator Count: {}", pool.statistics.validator_count);
+    let pool_stats = client.fetch_all_pools_with_stats(current_epoch).await?;
+    if let Some(stats) = pool_stats.get("jito") {
+        println!("Pool: jito");
+        println!("  Total Accounts: {}", stats.summary().total_accounts);
+        println!("  Active Accounts: {}", stats.summary().active_accounts);
+        println!("  Deactivating Accounts: {}", stats.summary().deactivating_accounts);
+        println!("  Deactivated Accounts: {}", stats.summary().deactivated_accounts);
+        println!("  Total Lamports: {}", stats.summary().total_lamports);
+        println!("  Active Stake Lamports: {}", stats.summary().active_stake_lamports);
+        println!("  Deactivating Stake Lamports: {}", stats.summary().deactivating_stake_lamports);
+        println!("  Deactivated Stake Lamports: {}", stats.summary().deactivated_stake_lamports);
+    println!("  Validator Count: {}", stats.validators.len());
 
-            // Find the first stake account with a delegation
-            if let Some(stake_account) = pool.stake_accounts.iter().find(|sa| sa.delegation.is_some()) {
-                println!("  Stake Account: {}", stake_account.pubkey);
-                println!("    Lamports: {}", stake_account.lamports);
-                println!("    Stake Type: {}", stake_account.stake_type);
-                if let Some(delegation) = &stake_account.delegation {
-                    println!("    Delegation:");
-                    println!("      Validator: {}", delegation.validator);
-                    println!("      Stake Lamports: {}", delegation.stake_lamports);
-                    println!("      Activation Epoch: {}", delegation.activation_epoch);
-                    println!("      Deactivation Epoch: {}", delegation.deactivation_epoch);
-                    println!("      Last Epoch Credits Cumulative: {}", delegation.last_epoch_credits_cumulative);
-                } else {
-                    println!("    Delegation: None");
-                }
-                println!("    Authority:");
-                println!("      Staker: {}", stake_account.authority.staker);
-                println!("      Withdrawer: {}", stake_account.authority.withdrawer);
-                // Lockup details omitted to avoid bloat
+        // Print first validator and first account for demo
+        if let Some(vstat) = stats.validators.first() {
+            println!("  Validator: {}", vstat.validator_pubkey);
+            if let Some(account) = vstat.accounts.first() {
+                println!("    Account: {}", account.account_pubkey);
+                println!("      State: {:?}", account.account_state);
+                println!("      Lamports: {}", account.account_size_in_lamports);
+                println!("      Activation Epoch: {:?}", account.activation_epoch);
+                println!("      Deactivation Epoch: {:?}", account.deactivation_epoch);
+                println!("      Authority: staker={:?}, withdrawer={:?}", account.authorized_staker, account.authorized_withdrawer);
             }
         }
+    } else {
+        println!("No Jito pool found.");
+    }
+    Ok(())
+}
+
+// Helper to fetch current epoch from RPC
+async fn fetch_current_epoch(rpc_url: &str) -> solana_pools_data_lib::Result<u64> {
+    let client = reqwest::Client::new();
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "getEpochInfo",
+        "params": []
     });
+    let resp = client.post(rpc_url)
+        .json(&body)
+        .send()
+        .await?;
+    let resp_json: serde_json::Value = resp.json().await?;
+    let epoch = resp_json["result"]["epoch"].as_u64()
+        .ok_or_else(|| PoolsDataError::ParseError { message: "No epoch in response".to_string() })?;
+    Ok(epoch)
 }

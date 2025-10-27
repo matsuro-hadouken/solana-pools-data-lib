@@ -37,6 +37,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             data.stake_accounts.len(),
             data.validator_distribution.len()
         );
+        // All statistics (active, activating, deactivating, inactive, waste, unknown) are pre-calculated and returned.
+        // See data.statistics (PoolStatisticsFull) for canonical state breakdown and engineering details.
+        // No manual calculation required.
     }
     Ok(())
 }

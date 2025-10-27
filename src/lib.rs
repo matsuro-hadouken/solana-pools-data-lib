@@ -35,6 +35,8 @@ mod error;
 mod pools;
 mod rpc;
 mod types;
+pub mod statistics;
+pub mod statistics_calc;
 
 pub use client::*;
 pub use config::*;
