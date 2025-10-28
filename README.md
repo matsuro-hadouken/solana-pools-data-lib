@@ -1,10 +1,10 @@
 
 # Pools Data Library
 
-Rust library for fetching Solana stake pools data. Supports production and debug formats, automatic RPC configuration, and all major pools.
+Rust library for fetching Solana stake pools data. Supports production and debug formats, RPC configuration, and 31 pools.
 
 ## Features
-- Canonical pool, validator, and account statistics calculated in-library and returned from API
+- Pool, validator, and account statistics calculated in-library
 - 31 supported pools (Jito, Marinade, Lido, etc.)
 - Rate limiting, retries, timeouts, provider presets
 
@@ -14,16 +14,19 @@ Rust library for fetching Solana stake pools data. Supports production and debug
   - `authority`: Pool authority pubkey
   - `stake_accounts`: List of stake accounts (optimized)
   - `validator_distribution`: Validator summary (includes aggregated validator credits)
-  - `statistics`: Pre-calculated pool statistics (canonical state logic, all account/validator states, edge case detection)
+  - `statistics`: Pool statistics (state logic, account/validator states, edge cases)
   - `fetched_at`: Timestamp
+- **PoolStatistics**:
+  - State counts and lamports (activating, active, deactivating, deactivated)
+  - Validator count and account/stake totals
 - **PoolStatisticsFull**:
-  - Canonical state counts and lamports for the pool (active, activating, deactivating, inactive, waste, unknown)
+  - State counts and lamports for the pool (active, activating, deactivating, inactive, waste, unknown)
 - **ValidatorStatisticsFull**:
-  - Canonical state counts and lamports for each validator
-  - Aggregated validator credits (total credits earned by each validator)
+  - State counts and lamports for each validator
+  - Validator credits (total credits earned by each validator)
 - **AccountStatisticsFull**:
-  - Canonical state counts and lamports for each account
-  - (Note: credits are not reported at the account level)
+  - State counts and lamports for each account
+  - Credits not reported at account level
 - **PoolsDataResult** (debug):
   - `successful`: Map of pool name to full pool data
   - `failed`: Map of pool name to error
@@ -34,14 +37,14 @@ Rust library for fetching Solana stake pools data. Supports production and debug
 - `PoolsDataClient::list_available_pools()` - Returns all supported pools
 - `PoolsDataClient::get_static_field_analysis()` - Returns static field analysis for stake accounts
 - `PoolsDataClient::test_connection()` - Tests RPC endpoint connectivity
-- `PoolsDataClient::fetch_pools(pool_names)` - Returns production data for specified pools. All statistics are pre-calculated
+- `PoolsDataClient::fetch_pools(pool_names)` - Returns production data for specified pools
 - `PoolsDataClient::fetch_all_pools()` - Returns production data for all supported pools
-- `PoolsDataClient::fetch_pools_debug(pool_names)` - Returns full debug data for specified pools, including all raw RPC fields
+- `PoolsDataClient::fetch_pools_debug(pool_names)` - Returns debug data for specified pools with raw RPC fields
 
-## Canonical Usage Note
+## Usage Note
 
-**Always pass `current_epoch` to the library for canonical state classification and statistics.**
-Fetch it from RPC to ensure all stake/account states are calculated correctly for the current epoch. This is required for all canonical examples and production usage.
+Pass `current_epoch` to the library for state classification and statistics.
+Fetch it from RPC to ensure stake/account states are calculated correctly for the current epoch.
 
 ## Installation
 ```toml
@@ -59,7 +62,7 @@ let client = PoolsDataClient::builder()
     .build("https://api.mainnet-beta.solana.com")
     .and_then(PoolsDataClient::from_config)?;
 
-// Fetch pools with all statistics pre-calculated
+// Fetch pools with statistics
 let pools = client.fetch_pools(&["jito", "marinade"]).await?;
 for (name, data) in pools {
     println!("Pool: {name}, Accounts: {}, Validators: {}, Total Staked: {} SOL",
@@ -71,8 +74,8 @@ for (name, data) in pools {
 ```
 
 ## Output Formats
-- **Production:** Clean, processed data for databases
-- **Debug:** Full RPC response, all original fields
+- **Production:** Processed data for databases
+- **Debug:** Full RPC response, original fields
 
 ## Configuration
 Provider presets:
@@ -83,24 +86,27 @@ Manual tuning:
 `.rate_limit(n)` | `.timeout(secs)` | `.retry_attempts(n)` | `.max_concurrent_requests(n)`
 
 ## Supported Pools
-32 major Solana stake pools. List: `PoolsDataClient::list_available_pools()`
+31 Solana stake pools. List: `PoolsDataClient::list_available_pools()`
 
 ## Error Handling
 All API methods return `Result`. Partial failures available in debug format.
 
 ## Common Use Cases
-- Database storage (production format, stable schema)
+- Database storage (production format)
 - REST API integration
 - Batch processing
 
-# Examples
-Run these to see usage patterns:
+## Examples
+Run examples:
 ```bash
 cargo run --example quick_test
 cargo run --example basic
 cargo run --example all_pools_statistics
 cargo run --example comprehensive
 cargo run --example rpc_configuration
+cargo run --example validate_statistics
+cargo run --example validator_accounts
+cargo run --example validator_map
 ```
 
 ## Documentation

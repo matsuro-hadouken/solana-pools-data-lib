@@ -38,13 +38,15 @@ mod tests {
         ];
         let stats = PoolsDataClient::calculate_pool_statistics(&stake_accounts);
         assert_eq!(stats.total_accounts, 2);
+        assert_eq!(stats.activating_accounts, 0); // No activating accounts without epoch
         assert_eq!(stats.active_accounts, 1);
         assert_eq!(stats.deactivating_accounts, 1);
-        assert_eq!(stats.deactivated_accounts, 0);
+        assert_eq!(stats.deactivated_accounts, 0); // No deactivated accounts without epoch
         assert_eq!(stats.total_lamports, 3000);
+        assert_eq!(stats.activating_stake_lamports, 0); // No activating stake without epoch
         assert_eq!(stats.active_stake_lamports, 1000);
         assert_eq!(stats.deactivating_stake_lamports, 2000);
-        assert_eq!(stats.deactivated_stake_lamports, 0);
+        assert_eq!(stats.deactivated_stake_lamports, 0); // No deactivated stake without epoch
         assert_eq!(stats.validator_count, 2);
     }
 }
@@ -378,46 +380,51 @@ impl PoolsDataClient {
         distribution
     }
 
-    /// Calculate pool statistics
+    /// Calculate pool statistics (without epoch awareness - simplified version)
     fn calculate_pool_statistics(stake_accounts: &[StakeAccountInfo]) -> PoolStatistics {
         let mut total_accounts = 0;
+        let activating_accounts = 0;
         let mut active_accounts = 0;
         let mut deactivating_accounts = 0;
-        let mut deactivated_accounts = 0;
+        let deactivated_accounts = 0;
+        let activating_stake_lamports: u64 = 0;
         let mut active_stake_lamports: u64 = 0;
         let mut deactivating_stake_lamports: u64 = 0;
-        let mut deactivated_stake_lamports: u64 = 0;
+        let deactivated_stake_lamports: u64 = 0;
         let mut total_lamports: u64 = 0;
         let mut validator_set = std::collections::HashSet::new();
 
-        // For now, assume current_epoch is not available here, so treat deactivation_epoch == u64::MAX as active, else deactivating or deactivated
-            for account in stake_accounts {
+        // Without current_epoch, we can't properly detect activating state
+        // This is a simplified version - use epoch-aware calculation when possible
+        for account in stake_accounts {
             total_lamports += account.lamports;
             if let Some(delegation) = &account.delegation {
                 total_accounts += 1;
                 validator_set.insert(&delegation.voter);
+                
                 if delegation.deactivation_epoch == u64::MAX {
+                    // Assume active if not deactivating (can't detect activating without epoch)
                     active_accounts += 1;
                     active_stake_lamports += delegation.stake;
-                } else if delegation.deactivation_epoch > 0 {
+                } else {
+                    // Treat all non-active as deactivating (simplified)
                     deactivating_accounts += 1;
                     deactivating_stake_lamports += delegation.stake;
-                } else {
-                    deactivated_accounts += 1;
-                    deactivated_stake_lamports += delegation.stake;
                 }
             }
         }
 
         PoolStatistics {
             total_accounts,
+            activating_accounts, // Will be 0 without epoch
             active_accounts,
             deactivating_accounts,
-            deactivated_accounts,
+            deactivated_accounts, // Will be 0 without epoch
             total_lamports,
+            activating_stake_lamports, // Will be 0 without epoch
             active_stake_lamports,
             deactivating_stake_lamports,
-            deactivated_stake_lamports,
+            deactivated_stake_lamports, // Will be 0 without epoch
             validator_count: validator_set.len(),
         }
     }

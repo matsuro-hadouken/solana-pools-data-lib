@@ -9,10 +9,9 @@ All examples demonstrate direct usage of the Solana Pools Data Library. Each exa
 - `comprehensive.rs` — Fetch and print data for all supported pools. No manual math.
 - `validator_accounts.rs` — List all stake accounts (open/closed) for a single validator in a pool, with full account details. No manual math.
 - `validator_map.rs` — Show all available fields for a single pool and validator. No manual math.
-- `all_pools_statistics.rs` — Print active, deactivating, deactivated stake, total lamports, and account counts for all pools. All statistics are from the library.
+- `all_pools_statistics.rs` — Print activating, active, deactivating, deactivated stake, total lamports, and account counts for all pools. All statistics are from the library.
 - `rpc_configuration.rs` — Demonstrate all RPC configuration options and presets. No manual math.
 - `validate_statistics.rs` — Validate and print all canonical statistics and account states for all pools and validators. Uses only library-calculated data.
-- `research_account_states.rs` — Research and audit stake account state classification and edge cases. (For research/validation, may duplicate logic for audit purposes.)
 
 ## Configuration Reference
 

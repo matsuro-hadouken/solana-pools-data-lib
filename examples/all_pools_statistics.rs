@@ -36,6 +36,9 @@ async fn main() -> solana_pools_data_lib::Result<()> {
         let summary = stats.summary();
         println!("Pool: {}", pool_name);
         println!("  Total stake accounts: {}", summary.total_accounts);
+        println!("  Activating accounts: {}", summary.activating_accounts);
+        println!("    Activating stake (lamports): {}", summary.activating_stake_lamports);
+        println!("    Activating stake (SOL): {:.2}", summary.activating_stake_lamports as f64 / 1_000_000_000.0);
         println!("  Active accounts: {}", summary.active_accounts);
         println!("    Active stake (lamports): {}", summary.active_stake_lamports);
         println!("    Active stake (SOL): {:.2}", summary.active_stake_lamports as f64 / 1_000_000_000.0);

@@ -34,13 +34,15 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                     successful += 1;
                     let stats = &data.statistics;
                     println!(
-                        "   Success: validators={}, total_accounts={}, active_accounts={}, deactivating_accounts={}, deactivated_accounts={}, total_lamports={}, active_stake_lamports={}, deactivating_stake_lamports={}, deactivated_stake_lamports={}, validator_count={}, active_stake_SOL={:.2}",
+                        "   Success: validators={}, total_accounts={}, activating_accounts={}, active_accounts={}, deactivating_accounts={}, deactivated_accounts={}, total_lamports={}, activating_stake_lamports={}, active_stake_lamports={}, deactivating_stake_lamports={}, deactivated_stake_lamports={}, validator_count={}, active_stake_SOL={:.2}",
                         data.validator_distribution.len(),
                         stats.total_accounts,
+                        stats.activating_accounts,
                         stats.active_accounts,
                         stats.deactivating_accounts,
                         stats.deactivated_accounts,
                         stats.total_lamports,
+                        stats.activating_stake_lamports,
                         stats.active_stake_lamports,
                         stats.deactivating_stake_lamports,
                         stats.deactivated_stake_lamports,

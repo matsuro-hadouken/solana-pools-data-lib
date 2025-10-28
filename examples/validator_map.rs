@@ -13,10 +13,12 @@ async fn main() -> solana_pools_data_lib::Result<()> {
     if let Some(stats) = pool_stats.get("jito") {
         println!("Pool: jito");
         println!("  Total Accounts: {}", stats.summary().total_accounts);
+        println!("  Activating Accounts: {}", stats.summary().activating_accounts);
         println!("  Active Accounts: {}", stats.summary().active_accounts);
         println!("  Deactivating Accounts: {}", stats.summary().deactivating_accounts);
         println!("  Deactivated Accounts: {}", stats.summary().deactivated_accounts);
         println!("  Total SOL: {}", stats.summary().total_lamports as f64 / 1_000_000_000.0);
+        println!("  Activating Stake SOL: {}", stats.summary().activating_stake_lamports as f64 / 1_000_000_000.0);
         println!("  Active Stake SOL: {}", stats.summary().active_stake_lamports as f64 / 1_000_000_000.0);
         println!("  Deactivating Stake SOL: {}", stats.summary().deactivating_stake_lamports as f64 / 1_000_000_000.0);
         println!("  Deactivated Stake SOL: {}", stats.summary().deactivated_stake_lamports as f64 / 1_000_000_000.0);

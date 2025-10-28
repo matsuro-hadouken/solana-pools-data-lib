@@ -1,9 +1,11 @@
 #[derive(Debug, Default, Clone)]
 pub struct PoolStatisticsSummary {
     pub total_accounts: usize,
+    pub activating_accounts: usize,
     pub active_accounts: usize,
     pub deactivating_accounts: usize,
     pub deactivated_accounts: usize,
+    pub activating_stake_lamports: u64,
     pub active_stake_lamports: u64,
     pub deactivating_stake_lamports: u64,
     pub deactivated_stake_lamports: u64,
@@ -20,6 +22,10 @@ impl PoolStatisticsFull {
                 summary.total_accounts += 1;
                 summary.total_lamports += account.account_size_in_lamports;
                 match account.account_state {
+                    StakeState::Activating => {
+                        summary.activating_accounts += 1;
+                        summary.activating_stake_lamports += account.account_size_in_lamports;
+                    }
                     StakeState::Active => {
                         summary.active_accounts += 1;
                         summary.active_stake_lamports += account.account_size_in_lamports;
@@ -32,7 +38,6 @@ impl PoolStatisticsFull {
                         summary.deactivated_accounts += 1;
                         summary.deactivated_stake_lamports += account.account_size_in_lamports;
                     }
-                    StakeState::Activating => {}
                 }
             }
         }
