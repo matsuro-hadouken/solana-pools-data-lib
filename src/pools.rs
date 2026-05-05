@@ -63,10 +63,10 @@ static POOLS_REGISTRY: Lazy<Vec<PoolInfo>> = Lazy::new(|| {
         PoolInfo::new("STKE", "5vzKiHVuZNx1XQWQZQEcuqKaq4nfDp6LhuSvowQK2ayd"),
         PoolInfo::new("jag_pool", "GEm1GKYZrGXdWqDvB9UXbCytKjgwiEX7yK6AffQBRK9d"),
         PoolInfo::new("shark_pool", "12bX3M9rnu1HWG87BwGfxeE5ouhWAJpdSqwBWiP8hnuQ"),
-        PoolInfo::new("dynosol", "DpooSqZRL3qCmiq82YyB4zWmLfH3iEqx2gy8f2B6zjru"),
-        PoolInfo::new("definity", "Bvbu55B991evqqhLtKcyTZjzQ4EQzRUwtf9T4CcpMmPL"),
-        PoolInfo::new("layer33", "74dxJToX8wgJAueLQNVhSbbQkNd9qeVp6m9mts6M7cUb"),
-        PoolInfo::new("starpool", "starTGMJss5QCaNaNpSHNPQrWV5JcZczRPsc3iA4FTb"),
+        PoolInfo::new("dynosol", "BqPJdYKKpReEfXHv8kgdmRcBfLToBSHpt1qThtb52GSs"),
+        PoolInfo::new("definity", "5ugu8RogBq5ZdfGt4hKxKotRBkndiV1ndsqWCf7PBmST"),
+        PoolInfo::new("layer33", "FQS7JfBjCUiSj6JRHZWqnuM8FNxnDrbaoErCXXe6fAj8"),
+        PoolInfo::new("starpool", "JBV9qdbKkiz1WmszJuL7qGuAYE2suPP6YU5R7gHqCGRe"),
     ]
 });
 
