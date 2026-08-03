@@ -158,8 +158,17 @@ struct RawDelegation {
     deactivation_epoch: String,
     stake: String, // String because values can exceed standard integer limits
     voter: String,
-    #[serde(rename = "warmupCooldownRate")]
+    // Deprecated on-chain; newer Agave nodes omit it from jsonParsed
+    // responses while older nodes still send it. Must stay optional.
+    #[serde(
+        rename = "warmupCooldownRate",
+        default = "default_warmup_cooldown_rate"
+    )]
     warmup_cooldown_rate: f64,
+}
+
+fn default_warmup_cooldown_rate() -> f64 {
+    0.25
 }
 
 /// Internal RPC client for making requests
@@ -506,6 +515,24 @@ impl RpcClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_raw_delegation_parses_without_warmup_cooldown_rate() {
+        // Newer Agave nodes omit the deprecated warmupCooldownRate field from
+        // jsonParsed stake responses; older nodes still send it. Both shapes
+        // must parse (regression: 2026-08-03 pools-daemon outage).
+        let omitted: RawDelegation = serde_json::from_str(
+            r#"{"activationEpoch":"862","deactivationEpoch":"18446744073709551615","stake":"1000000000","voter":"validator123"}"#,
+        )
+        .expect("delegation without warmupCooldownRate must parse");
+        assert!((omitted.warmup_cooldown_rate - 0.25).abs() < f64::EPSILON);
+
+        let present: RawDelegation = serde_json::from_str(
+            r#"{"activationEpoch":"862","deactivationEpoch":"0","stake":"1","voter":"validator123","warmupCooldownRate":0.09}"#,
+        )
+        .expect("delegation with warmupCooldownRate must parse");
+        assert!((present.warmup_cooldown_rate - 0.09).abs() < f64::EPSILON);
+    }
 
     #[test]
     fn test_rpc_request_creation() {
