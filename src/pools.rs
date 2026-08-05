@@ -67,6 +67,7 @@ static POOLS_REGISTRY: Lazy<Vec<PoolInfo>> = Lazy::new(|| {
         PoolInfo::new("definity", "5ugu8RogBq5ZdfGt4hKxKotRBkndiV1ndsqWCf7PBmST"),
         PoolInfo::new("layer33", "FQS7JfBjCUiSj6JRHZWqnuM8FNxnDrbaoErCXXe6fAj8"),
         PoolInfo::new("starpool", "JBV9qdbKkiz1WmszJuL7qGuAYE2suPP6YU5R7gHqCGRe"),
+        PoolInfo::new("marinade_select", "STNi1NHDUi6Hvibvonawgze8fM83PFLeJhuGMEXyGps"),
     ]
 });
 
