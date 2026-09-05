@@ -95,8 +95,19 @@ Then lowercase and replace runs of non-alphanumerics with `_`.
 
 The rule is imperfect (`The Vault` -> `the_vault`, `JPOOL Solana Token` ->
 `jpool_solana_token`), but under the freeze rule those pools keep their existing names, so
-imperfect slugs only ever land on genuinely new pools where a human is reviewing the diff
-anyway.
+imperfect slugs only ever land on genuinely new pools where a human is reviewing the diff.
+
+**Guards, because the freeze rule makes a bad slug permanent.** The strip can eat a whole
+legitimate brand — `Wrapped SOL`, `Liquid Solana`, or any operator whose brand genuinely
+ends in "Sol". So: if the stripped result is empty or under 3 characters, discard it and
+fall back to `unnamed_<pool8>` with a TODO. If stripping changed the string at all and the
+remainder is a single short token, emit the name with a `// verify: from "<original>"`
+comment so it gets a second look during diff review.
+
+**Alias overrides.** A small table in the generator maps mint to an operator-preferred name,
+for cases where the on-chain name is not what the operator calls the entity. Seeded from
+ground truth: `GTSOL -> gate_io`, `dfdvSOL -> defidevcorp`. Aliases take precedence over the
+slug rule but not over an existing frozen name.
 
 **Name precedence, in order:**
 
@@ -104,7 +115,16 @@ anyway.
 2. Sanctum `name`, boilerplate-stripped and slugified (see above).
 3. `unnamed_<first 8 chars of pool address>`, emitted with a `// TODO: name` comment.
 
-**Retention.** A generated entry is never removed once emitted, even if the pool later
+**Retention uses a third section, not a comment.** Trailing comments are invisible to code,
+so retained-dead pools would silently accumulate into `fetch_all_pools()` and be reported
+forever as successful empty pools — "all pools" would quietly come to mean "all pools ever
+generated." Retired entries move to a `// ---- RETIRED ----` block instead, and:
+
+- `get_all_pools()` keeps returning them, so `get_pool_by_name()` still resolves and no API
+  key breaks;
+- a new `get_active_pools()` excludes them, and `fetch_all_pools()` uses it.
+
+A generated entry is never *deleted* once emitted, even if the pool later
 falls below `--min-sol` or disappears from the program. Removal would delete a live API key,
 which is the exact failure the freeze invariant exists to prevent. A pool that drops out is
 retained with a `// below threshold as of epoch N` or `// no longer on-chain` comment; only
@@ -154,11 +174,14 @@ abandoned pool the field reports its balance at the moment it stopped being main
 a pool that has since drained to zero still passes the threshold, and one that has grown
 may fail it.
 
-Mitigation: read `last_update_epoch`@274 alongside it and emit a trailing comment
-(`// stale: last updated epoch 812`) on any pool more than 10 epochs behind, so the
-operator sees which threshold decisions rest on stale data. Not a hard filter — a stale
-pool can still hold real stake, and the library reads live stake accounts at fetch time
-regardless. The threshold is a registry-inclusion heuristic, not a balance report.
+Mitigation, asymmetric by direction of harm:
+
+- **Already-known pools** keep a soft `// stale: last updated epoch 812` comment. A hard
+  filter would evict live pools that simply have not been cranked, which is worse.
+- **Brand-new entries** may not be admitted on stale data alone. If a pool is >10 epochs
+  behind and its cached `total_lamports` is what puts it over the threshold, the generator
+  sums the live lamports of its stake accounts and uses that instead. Otherwise a pool that
+  drained to zero years ago is admitted on a fossil balance.
 
 Chosen default: **1 SOL, giving 261 pools.** Accepted consequences:
 
@@ -192,7 +215,32 @@ fetch Sanctum list -> apply name precedence -> emit `src/pools.rs`.
 Reads the current `src/pools.rs` first, to recover existing authority-to-name bindings and
 the MANUAL block, then rewrites it.
 
-New dev-dependencies: `solana-pubkey`, `toml`. Dev-only, so nothing reaches consumers.
+**Dependencies, MSRV-gated.** `Cargo.toml:13` declares `rust-version = "1.75"`, but every
+published `solana-pubkey` exceeds it (3.0.0 needs 1.81; 4.x needs 1.89), and host-side
+`create_program_address` sits behind the `curve25519` feature. A plain dev-dependency would
+break `cargo test` for anyone on 1.75.
+
+So they become *optional* dependencies behind a feature, and the example requires it:
+
+```toml
+[features]
+discover = ["dep:solana-pubkey", "dep:toml"]
+
+[dependencies]
+solana-pubkey = { version = "3.0", features = ["curve25519"], optional = true }
+toml          = { version = "0.8", optional = true }
+
+[[example]]
+name = "discover_pools"
+required-features = ["discover"]
+```
+
+```
+cargo run --features discover --example discover_pools -- --min-sol 1
+```
+
+The library's 1.75 promise is unchanged for consumers and for CI; only the maintainer
+running the generator needs 1.81+.
 
 ### `src/pools.rs` (regenerated, structure changed)
 
@@ -214,8 +262,11 @@ block. The public API of the module is unchanged.
 **First-run bootstrap.** The committed `src/pools.rs` has no markers today, so "abort when
 markers are missing" would make the first run impossible. When no markers are found, the
 generator performs a one-time migration instead: parse the flat `PoolInfo::new` list, and
-split it by whether each authority appears in the freshly derived set — into MANUAL
-(33 entries: kraken, figment, marinade, lido, …) and GENERATED (28 entries). It prints the
+split it by whether each authority appears in the derived set — into MANUAL
+(33 entries: kraken, figment, marinade, lido, …) and GENERATED (28 entries).
+**The derived set used for classification is pre-threshold** (all 1,693 pools, ignoring
+`--min-sol`). Using the post-threshold set would misclassify a known SPL pool that happens
+to sit below the current threshold as MANUAL, and it would then never be regenerated. It prints the
 classification to stderr for review. This path runs once; afterwards markers exist and a
 missing marker is a genuine error.
 
@@ -236,9 +287,13 @@ mis-derived authority, a stale manual entry, or a migrated pool. So emptiness mu
 visible rather than becoming invisible:
 
 - the empty case logs at `warn!` with the pool name and authority;
-- `--verify` on the generator queries each newly-derived authority once and refuses to emit
-  any that returns zero stake accounts, moving the check to generation time where a human
-  is present, instead of leaving it to silently degrade a production fetch.
+- `--verify` on the generator queries each newly-derived authority, moving the check to
+  generation time where a human is present. It must not treat one empty response as proof
+  of a bad authority: a legitimate pool can hold everything in reserve, and RPC returns
+  transient empties. So a zero result is retried at a later slot, and a still-empty pool is
+  **marked, not rejected**. Rejection is reserved for the signal that actually means the
+  derivation broke: *all* newly derived authorities coming back empty in one run, which
+  aborts.
 
 ### `src/pools.rs` invariants (new tests)
 
@@ -282,8 +337,11 @@ The generator is an operator tool run by hand; it fails loudly and writes nothin
   silently delete pools from the registry.
 - Sanctum list unreachable: abort non-zero rather than regenerating with every name
   degraded to `unnamed_*`, which would look like mass renaming in the diff.
-- An account shorter than 266 bytes, or a `pool_mint` of all zeros: skip that pool, warn to
-  stderr, continue.
+- Any account whose `data.len() != 611`, or whose `pool_mint` is all zeros: skip, warn to
+  stderr, continue. (An earlier draft said "shorter than 266 bytes", which no longer covers
+  `last_update_epoch` at 274..282.)
+- A program returning zero `dataSize: 611` accounts: abort. That means the layout or program
+  ID assumption has broken, not that every pool vanished.
 - Existing `src/pools.rs` unparseable or missing a section marker: abort non-zero. Losing
   the manual block loses 33 hand-curated pools.
 
@@ -299,8 +357,12 @@ Generator, in `examples/discover_pools.rs` under `#[cfg(test)]`:
   produce `6iQKfEyhr3bZMotVkW6beNZz5CPAkiwvgV2CTje9pVSS`. This is the one piece of
   non-trivial logic and the check that fails if the layout or hash construction breaks.
 - Name precedence: an authority already present keeps its name even when the Sanctum
-  symbol differs.
-- Collision suffixing produces `_2` on a duplicate symbol.
+  `name` differs (regression guard for `forward_industries` vs `Dum Staked SOL`).
+- Slug rule: `Phantom Staked SOL` -> `phantom`; `Gate Wrapped SOL` -> `gate` (then the alias
+  table maps it to `gate_io`); a name that strips to empty or <3 chars falls back to
+  `unnamed_*` rather than emitting a mangled slug.
+- Collision suffixing produces `_2`/`_3` deterministically, ordered by authority pubkey.
+- Duplicate authority across MANUAL, GENERATED, and RETIRED blocks aborts.
 
 Library:
 
