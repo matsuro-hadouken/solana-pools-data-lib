@@ -50,15 +50,28 @@ Fields read from each account:
 | 97 | `stake_withdraw_bump_seed` (u8) | PDA derivation |
 | 162..194 | `pool_mint` (Pubkey) | naming key |
 | 258..266 | `total_lamports` (u64 LE) | size threshold |
+| 274..282 | `last_update_epoch` (u64 LE) | staleness guard |
 
-Because the bump is stored on-chain, the authority is a single hash — no
-`find_program_address` bump-search loop and no ed25519 curve check:
+The stored bump lets us skip the `find_program_address` bump-search loop, but **not** the
+off-curve check:
 
-```
-authority = base58(sha256(pool || "withdraw" || [bump] || program_id || "ProgramDerivedAddress"))
+```rust
+let authority = Pubkey::create_program_address(
+    &[pool.as_ref(), b"withdraw", &[bump]], &program_id,
+)?;   // errors InvalidSeeds if the result is on-curve
 ```
 
 Verified: reproduces all 28 currently-derivable registry entries exactly.
+
+An earlier draft computed this as a bare `sha256(pool || "withdraw" || bump || program_id ||
+"ProgramDerivedAddress")` to avoid a dependency. That is wrong at a trust boundary. If the
+bump is corrupt, offset 97 drifts, or a fork changes the layout, a bare hash silently emits
+an on-curve pubkey that is not a valid PDA and cannot own anything — a garbage authority
+written into the registry as though it were real. `create_program_address` costs one dev-
+dependency and turns that silent corruption into a hard error.
+
+`solana-pubkey` provides both the derivation and base58, so it *replaces* `sha2` and `bs58`
+rather than adding to them.
 
 ### Naming
 
@@ -66,13 +79,42 @@ Verified: reproduces all 28 currently-derivable registry entries exactly.
 (`https://raw.githubusercontent.com/igneous-labs/sanctum-lst-list/master/sanctum-lst-list.toml`),
 245 entries mapping mint to `symbol` and `name`.
 
+**Use the `name` field, not `symbol`.** The registry's convention is *entity* names
+(`binance_2`, `kraken`, `figment`, `jito`), not ticker symbols. Symbols produce `gtsol`,
+`psol`, `dfdvsol`; the `name` field with its LST boilerplate stripped produces the entity:
+
+| Sanctum `name` | slug | operator's own name |
+|---|---|---|
+| `Phantom Staked SOL` | `phantom` | phantom |
+| `Sanctum Staked SOL` | `sanctum` | sanctum |
+| `Gate Wrapped SOL` | `gate` | gate.io |
+| `DeFi Development Corp Staked SOL` | `defi_development_corp` | defidevcorp |
+
+Boilerplate strip: trailing `(liquid )?(staked|wrapped|restaked)? sol(ana)?`, case-insensitive.
+Then lowercase and replace runs of non-alphanumerics with `_`.
+
+The rule is imperfect (`The Vault` -> `the_vault`, `JPOOL Solana Token` ->
+`jpool_solana_token`), but under the freeze rule those pools keep their existing names, so
+imperfect slugs only ever land on genuinely new pools where a human is reviewing the diff
+anyway.
+
 **Name precedence, in order:**
 
 1. **Existing registry name, matched by authority pubkey.** Frozen forever.
-2. Sanctum `symbol`, lowercased with every non-alphanumeric character replaced by `_`
-   (`JitoSOL` -> `jitosol`, `dumSOL` -> `dumsol`). Not word-split: `JitoSOL` does **not**
-   become `jito_sol`.
+2. Sanctum `name`, boilerplate-stripped and slugified (see above).
 3. `unnamed_<first 8 chars of pool address>`, emitted with a `// TODO: name` comment.
+
+**Retention.** A generated entry is never removed once emitted, even if the pool later
+falls below `--min-sol` or disappears from the program. Removal would delete a live API key,
+which is the exact failure the freeze invariant exists to prevent. A pool that drops out is
+retained with a `// below threshold as of epoch N` or `// no longer on-chain` comment; only
+a human deletes entries.
+
+**Migration.** If an LST moves to a new pool address, its withdraw authority changes, so it
+appears as a new pool with a colliding slug and gets a `_2` suffix while the old entry is
+retained-and-commented. The generator cannot detect that these are the same operator —
+merging them is a human edit. Same-mint-different-authority is flagged to stderr so the
+operator sees the case rather than discovering it later.
 
 Rule 1 is the invariant: **the authority pubkey is the pool's identity; the name is a
 mutable label that the generator may add but never change.** Pool names are API keys, and a
@@ -84,7 +126,14 @@ comment (`// sanctum: dumSOL`) so divergences are visible and can be resolved by
 deliberate human edit.
 
 Name collisions between two different authorities are resolved by appending `_2`, `_3`,
-matching the existing registry convention.
+matching the existing registry convention. Measured: 2 collisions today (`binance` against
+the existing manual `binance`; `sanctum` against the existing `sanctum`, needing `sanctum_3`).
+
+**Suffix assignment must be deterministic.** When several *new* pools slug to the same base
+in one run, they are sorted by authority pubkey before suffixes are handed out. Otherwise
+`sanctum_3` and `sanctum_4` could swap between runs, which would violate the freeze
+invariant for exactly the pools the invariant exists to protect. After the first run the
+assignment is read back out of `pools.rs` and frozen like any other name.
 
 ### Threshold
 
@@ -97,6 +146,19 @@ matching the existing registry convention.
 | 10 | 180 | 138 | 42 |
 | 100 | 128 | 104 | 24 |
 | 1000 | 80 | 68 | 12 |
+
+**`total_lamports` is a cached field, not a live balance.** It is only refreshed by
+`UpdateStakePoolBalance`, once per epoch. Measured at epoch 1028: of the 261 pools over the
+1 SOL threshold, 217 were current, but **41 were more than 10 epochs stale**. For an
+abandoned pool the field reports its balance at the moment it stopped being maintained, so
+a pool that has since drained to zero still passes the threshold, and one that has grown
+may fail it.
+
+Mitigation: read `last_update_epoch`@274 alongside it and emit a trailing comment
+(`// stale: last updated epoch 812`) on any pool more than 10 epochs behind, so the
+operator sees which threshold decisions rest on stale data. Not a hard filter — a stale
+pool can still hold real stake, and the library reads live stake accounts at fetch time
+regardless. The threshold is a registry-inclusion heuristic, not a balance report.
 
 Chosen default: **1 SOL, giving 261 pools.** Accepted consequences:
 
@@ -130,7 +192,7 @@ fetch Sanctum list -> apply name precedence -> emit `src/pools.rs`.
 Reads the current `src/pools.rs` first, to recover existing authority-to-name bindings and
 the MANUAL block, then rewrites it.
 
-New dev-dependencies: `sha2`, `bs58`, `toml`.
+New dev-dependencies: `solana-pubkey`, `toml`. Dev-only, so nothing reaches consumers.
 
 ### `src/pools.rs` (regenerated, structure changed)
 
@@ -149,6 +211,14 @@ PoolInfo::new("jito", "6iQKfEyhr3bZMotVkW6beNZz5CPAkiwvgV2CTje9pVSS"),
 The generator copies the MANUAL block through verbatim and rewrites only the GENERATED
 block. The public API of the module is unchanged.
 
+**First-run bootstrap.** The committed `src/pools.rs` has no markers today, so "abort when
+markers are missing" would make the first run impossible. When no markers are found, the
+generator performs a one-time migration instead: parse the flat `PoolInfo::new` list, and
+split it by whether each authority appears in the freshly derived set — into MANUAL
+(33 entries: kraken, figment, marinade, lido, …) and GENERATED (28 entries). It prints the
+classification to stderr for review. This path runs once; afterwards markers exist and a
+missing marker is a genuine error.
+
 ### `src/client.rs` (one targeted fix)
 
 `client.rs:317` returns `PoolsDataError::NoStakeAccounts` when a pool has zero stake
@@ -160,6 +230,32 @@ Change: an empty account list produces a successful `PoolData` with an empty
 `NoStakeAccounts` is removed from the error path.
 
 This is in scope because auto-discovery is what makes the case common.
+
+**But silence here would hide a bad authority.** An empty result is indistinguishable from a
+mis-derived authority, a stale manual entry, or a migrated pool. So emptiness must stay
+visible rather than becoming invisible:
+
+- the empty case logs at `warn!` with the pool name and authority;
+- `--verify` on the generator queries each newly-derived authority once and refuses to emit
+  any that returns zero stake accounts, moving the check to generation time where a human
+  is present, instead of leaving it to silently degrade a production fetch.
+
+### `src/pools.rs` invariants (new tests)
+
+`POOLS_BY_AUTHORITY` (`pools.rs:105`) is built with `collect()`, so two entries sharing an
+authority silently overwrite each other and misattribute fetched stake accounts. Existing
+tests check duplicate *names* only. Add a duplicate-*authority* test covering the MANUAL and
+GENERATED blocks together, and have the generator abort on a cross-block collision.
+
+### Determinism and provenance
+
+The GENERATED block is sorted by authority pubkey so regeneration produces a minimal diff.
+Output is rustfmt-compatible and idempotent: running the generator twice against an
+unchanged chain state produces a byte-identical file.
+
+A header comment records the RPC endpoint, slot, epoch, `--min-sol`, and the Sanctum list
+commit, so a surprising diff can be traced to what changed. The counts quoted in this spec
+were measured at epoch 1028 against `api.mainnet-beta.solana.com`.
 
 ## Data Flow
 
