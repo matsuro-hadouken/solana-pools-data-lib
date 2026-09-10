@@ -2,6 +2,7 @@
 //!
 //! This module contains the embedded list of known stake pool authorities
 //! and provides utilities for working with pool information.
+//! Provenance: hand-maintained; not yet generated
 
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -25,10 +26,11 @@ impl PoolInfo {
     }
 }
 
-/// Static registry of all known pools
-/// This replaces the external JSON file with embedded data
-static POOLS_REGISTRY: Lazy<Vec<PoolInfo>> = Lazy::new(|| {
+/// Static registry of all known pools, split into active and retired.
+static POOLS_ACTIVE: Lazy<Vec<PoolInfo>> = Lazy::new(|| {
     vec![
+        // ---- MANUAL ----
+        // Custodial and non-SPL pools. Edit freely.
         PoolInfo::new("foundation", "mpa4abUkjQoAvPzREkh5Mo75hZhPFQ2FSH6w7dWKuQ5"),
         PoolInfo::new("firedancer_delegation", "FiRep26iRQbMaKbqhhs5CqXqy7YrHn462LbnQhXzB2ps",),
         PoolInfo::new("double_zero", "4cpnpiwgBfUgELVwNYiecwGti45YHSH3R72CPkFTiwJt",),
@@ -90,8 +92,33 @@ static POOLS_REGISTRY: Lazy<Vec<PoolInfo>> = Lazy::new(|| {
         PoolInfo::new("p2p", "AxqtG9SHDkZTLSWg81Sp7VqAzQpRqXtR9ziJ3VQAS8As"),
         PoolInfo::new("forward_industries", "3ndMuPC9Cz5VC4RJkpoPaZz6Px6eVXtRenw9Yi1o2xnA"),
         PoolInfo::new("forward_industries_2", "7d4ZhfBRamc2szcuHbVGYbuKFNfjZoKeXm2S3JC2uXeP"),
+        // ---- END MANUAL ----
+
+        // ---- GENERATED ----
+        // Written by discover_pools. Do not edit by hand.
+        // ---- END GENERATED ----
     ]
 });
+
+static POOLS_RETIRED: Lazy<Vec<PoolInfo>> = Lazy::new(|| {
+    vec![
+        // ---- RETIRED ----
+        // Kept so existing pool names keep resolving. Excluded from get_active_pools.
+        // ---- END RETIRED ----
+    ]
+});
+
+/// Every pool, active and retired. Retired entries stay here so existing
+/// pool names keep resolving.
+static POOLS_REGISTRY: Lazy<Vec<PoolInfo>> = Lazy::new(|| {
+    POOLS_ACTIVE.iter().chain(POOLS_RETIRED.iter()).cloned().collect()
+});
+
+/// Pools that should actually be fetched. Excludes retired entries.
+#[must_use]
+pub fn get_active_pools() -> &'static [PoolInfo] {
+    &POOLS_ACTIVE
+}
 
 /// Index by pool name for fast lookups
 static POOLS_BY_NAME: Lazy<HashMap<String, PoolInfo>> = Lazy::new(|| {
@@ -226,6 +253,34 @@ mod tests {
                 .authority
                 .chars()
                 .all(|c| "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz".contains(c)));
+        }
+    }
+
+    #[test]
+    fn retired_pools_still_resolve_by_name() {
+        // Retiring a pool must never break an API key. It leaves fetch_all_pools,
+        // but name lookup keeps working.
+        for p in POOLS_RETIRED.iter() {
+            assert!(get_pool_by_name(&p.name).is_some(), "{} stopped resolving", p.name);
+        }
+    }
+
+    #[test]
+    fn active_pools_exclude_retired() {
+        let active: std::collections::HashSet<_> = get_active_pools().iter().map(|p| &p.name).collect();
+        for p in POOLS_RETIRED.iter() {
+            assert!(!active.contains(&p.name), "{} should not be active", p.name);
+        }
+        assert_eq!(get_all_pools().len(), get_active_pools().len() + POOLS_RETIRED.len());
+    }
+
+    #[test]
+    fn all_pools_have_unique_authorities() {
+        // POOLS_BY_AUTHORITY is built with collect(), so duplicates silently
+        // overwrite and misattribute fetched stake accounts.
+        let mut seen = std::collections::HashSet::new();
+        for p in get_all_pools() {
+            assert!(seen.insert(&p.authority), "duplicate authority: {} ({})", p.authority, p.name);
         }
     }
 }
