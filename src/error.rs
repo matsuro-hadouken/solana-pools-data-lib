@@ -38,6 +38,10 @@ pub enum PoolsDataError {
     #[error("Pool '{pool_name}' not found in available pools")]
     PoolNotFound { pool_name: String },
 
+    /// A pool had no stake accounts. No longer produced by the client: an empty
+    /// account list is a legitimate result (a pool can hold its whole balance in
+    /// reserve) and now yields a successful `PoolData` with zeroed statistics.
+    /// Retained because removing a public enum variant is a breaking change.
     #[error("No stake accounts found for pool '{pool_name}'")]
     NoStakeAccounts { pool_name: String },
 

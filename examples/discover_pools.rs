@@ -116,11 +116,10 @@ async fn main() -> Result<(), BoxErr> {
             cohort.push(Candidate {
                 authority,
                 pool: sp.pool.to_string(),
-                mint: sp.mint.to_string(),
                 sanctum_name: name,
                 sanctum_symbol: symbol,
-                total_sol,
                 stale,
+                verify_empty: false,
             });
         }
         cohorts.insert(program, cohort);
@@ -136,22 +135,34 @@ async fn main() -> Result<(), BoxErr> {
     //    never fire when only one program diverges, and that program's wrong
     //    authorities would be emitted anyway.
     let mut candidates = Vec::new();
-    for (program, cohort) in cohorts {
-        let fresh: Vec<_> = cohort.iter().filter(|c| !known.contains(&c.authority)).collect();
-        if verify && !fresh.is_empty() {
-            let mut nonempty = 0;
-            for c in &fresh {
-                if stake_account_count(&http, &rpc_url, &c.authority).await? > 0 {
-                    nonempty += 1;
+    for (program, mut cohort) in cohorts {
+        if verify {
+            let mut fresh = 0usize;
+            let mut empty: HashSet<String> = HashSet::new();
+            for c in cohort.iter().filter(|c| !known.contains(&c.authority)) {
+                fresh += 1;
+                if stake_account_count(&http, &rpc_url, &c.authority).await? == 0 {
+                    empty.insert(c.authority.clone());
                 }
             }
-            if nonempty == 0 {
+            if fresh > 0 && empty.len() == fresh {
                 eprintln!(
-                    "ABORT: all {} new authorities under {program} returned no stake \
-                     accounts; derivation for this program looks broken",
-                    fresh.len()
+                    "ABORT: all {fresh} new authorities under {program} returned no stake \
+                     accounts; derivation for this program looks broken"
                 );
                 std::process::exit(1);
+            }
+            // A single empty authority is not proof of a broken derivation — a
+            // pool can hold everything in reserve — but it is equally what one
+            // mis-derived authority looks like, and its name freezes the moment
+            // it ships. Counting the cohort alone let that case through
+            // unmarked, so mark it: the note lands in the diff a human reviews.
+            for c in cohort.iter_mut().filter(|c| empty.contains(&c.authority)) {
+                c.verify_empty = true;
+                eprintln!(
+                    "verify: new authority {} (pool {}) has no stake accounts; marked for review",
+                    c.authority, c.pool
+                );
             }
         }
         candidates.extend(cohort);
@@ -218,9 +229,24 @@ async fn main() -> Result<(), BoxErr> {
     Ok(())
 }
 
-/// Every (authority, name) binding in a registry, order-independent.
-fn entry_keys(reg: &Registry) -> Vec<(String, String)> {
-    let mut v: Vec<_> = reg.all().map(|e| (e.authority.clone(), e.name.clone())).collect();
+/// Everything a splice is supposed to carry: which section an entry landed in,
+/// its authority->name binding, and its note. Order-independent.
+///
+/// The section index and the note are not decoration. Flattening `reg.all()`
+/// would let a pool that should have MOVED between sections — retired,
+/// un-retired, promoted out of MANUAL — or a note-only change compare equal, so
+/// a splice that wrote none of it would pass the guard while the provenance
+/// line was restamped, leaving a file that merely looks freshly generated.
+fn entry_keys(reg: &Registry) -> Vec<(usize, String, String, Option<String>)> {
+    let mut v: Vec<_> = [&reg.manual, &reg.generated, &reg.retired]
+        .into_iter()
+        .enumerate()
+        .flat_map(|(section, entries)| {
+            entries
+                .iter()
+                .map(move |e| (section, e.authority.clone(), e.name.clone(), e.note.clone()))
+        })
+        .collect();
     v.sort();
     v
 }

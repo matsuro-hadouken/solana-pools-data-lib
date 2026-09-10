@@ -26,7 +26,41 @@ impl PoolInfo {
     }
 }
 
+// ===========================================================================
+// The pool lists below are GENERATED. Do not hand-edit them.
+//
+//   cargo run --features discover --example discover_pools -- --min-sol 1
+//
+// This block of guidance lives OUTSIDE the section markers on purpose: the
+// generator replaces every byte between an opening marker line and its closing
+// pair, so anything written inside a marked region is erased on the next run.
+// (It also deliberately spells the markers below with a placeholder rather than
+// their real text, so this comment cannot be mistaken for a marker itself.)
+//
+// Rules the generator relies on:
+//
+//   * `#[rustfmt::skip]` on both statics is load-bearing, not cosmetic.
+//     Without it `cargo fmt` rewraps the ~121 `PoolInfo::new(..)` calls that
+//     exceed 100 columns onto four lines; the generator's parser requires the
+//     whole call on one line, so those entries would be rejected (loudly, now)
+//     and, before that check existed, silently dropped — losing the frozen
+//     authority->name bindings that ARE this crate's public API.
+//   * A section marker must be a line that is EXACTLY `// ---- NAME ----`,
+//     where NAME is MANUAL, GENERATED or RETIRED, each closed by an equally
+//     exact `// ---- END NAME ----`. A marker embedded in a longer sentence is
+//     not matched, and the region it was meant to open is left untouched.
+//   * Inside the markers, only one-line `PoolInfo::new("name", "authority"),`
+//     entries, blank lines, and `//` comments are legal. Anything else aborts
+//     the generator.
+//   * The MANUAL section is hand-curated in content only. The generator
+//     re-renders it and re-sorts it by authority on every run; trailing
+//     `// notes` are carried across, arbitrary non-entry code is not.
+//   * A pool name, once emitted, is frozen forever — it is a public API key.
+//     Identity is the authority pubkey; the name is only a label.
+// ===========================================================================
+
 /// Static registry of all known pools, split into active and retired.
+#[rustfmt::skip]
 static POOLS_ACTIVE: Lazy<Vec<PoolInfo>> = Lazy::new(|| {
     vec![
         // ---- MANUAL ----
@@ -66,12 +100,12 @@ static POOLS_ACTIVE: Lazy<Vec<PoolInfo>> = Lazy::new(|| {
         // ---- END MANUAL ----
 
         // ---- GENERATED ----
-        PoolInfo::new("shark_pool", "12bX3M9rnu1HWG87BwGfxeE5ouhWAJpdSqwBWiP8hnuQ"), // stale: cached balance
+        PoolInfo::new("shark_pool", "12bX3M9rnu1HWG87BwGfxeE5ouhWAJpdSqwBWiP8hnuQ"), // stale: balance recomputed live
         PoolInfo::new("hylo", "2C9aTiNL6VyrPhFKspZC8BY9JeL3j4RtkPP2e4PrVAwP"),
         PoolInfo::new("science", "2CJbnuRygrzVYoKbLhJbwq16x46ERARFPzBe57pyuiGg"),
-        PoolInfo::new("unnamed_bigSoLFH", "2NNUCEkYtAdam4pULQeQjSid5NLMsiJTjZBk8ZMmAxce"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_bigSoLFH", "2NNUCEkYtAdam4pULQeQjSid5NLMsiJTjZBk8ZMmAxce"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("unnamed_AdHRYZki", "2SqLr2wcXDDMSozGNaDVo1L1t781WvVjyt4v4hwAuqrx"), // TODO: name
-        PoolInfo::new("unnamed_KobeQvrd", "2ZbZu7Uf3kzDMMc1AKYczKXsHnjQkb462VzcAwaPL5Df"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_KobeQvrd", "2ZbZu7Uf3kzDMMc1AKYczKXsHnjQkb462VzcAwaPL5Df"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("soul", "2bKmVmyqCw4LFa2sWeKpJH7Leq7MjTzfWDdWogZHPjey"), // verify: from "soulSOL"
         PoolInfo::new("unnamed_art2P2qi", "2n3MKK5X4v7V6SZ9fXNBouhpRpDYxhPpf3FktAbxSm7Q"), // TODO: name
         PoolInfo::new("pathfinders", "2oFvntttTFoEejX5uRoP5NLovNjhe7fiCZhs3Td1tpYa"),
@@ -93,9 +127,9 @@ static POOLS_ACTIVE: Lazy<Vec<PoolInfo>> = Lazy::new(|| {
         PoolInfo::new("bybit", "3pFTQjRVwcJHSpUNH5n1hx6Jwx7V3EzJDDHaKuwExyGJ"),
         PoolInfo::new("picosol", "4At8nQXanWgRvjbrVXmxMBBdfz39txWVm4SiXEoP1kGh"),
         PoolInfo::new("lstache", "4FRxJaH6P5Z5mTMkGXezPdpUJPBA6cWrZY8ihfhaCbXw"),
-        PoolInfo::new("unnamed_RUNxPVMz", "4G4n7tePpSEBvQV9uNqPMrPrNNFbxLyTvXP8V38ApjFL"), // TODO: name; stale: cached balance
-        PoolInfo::new("unnamed_DpufHXpz", "4HBJeDeg2oLVsk6GButjc4xffWajbwTv2v7Uwi7DvCs1"), // TODO: name; stale: cached balance
-        PoolInfo::new("unnamed_48S4Uzpv", "4HFhcoaHfmfQL7uJyyTY5JGMcWHJAX3BKCaPsY3BtZdx"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_RUNxPVMz", "4G4n7tePpSEBvQV9uNqPMrPrNNFbxLyTvXP8V38ApjFL"), // TODO: name; stale: balance recomputed live
+        PoolInfo::new("unnamed_DpufHXpz", "4HBJeDeg2oLVsk6GButjc4xffWajbwTv2v7Uwi7DvCs1"), // TODO: name; stale: balance recomputed live
+        PoolInfo::new("unnamed_48S4Uzpv", "4HFhcoaHfmfQL7uJyyTY5JGMcWHJAX3BKCaPsY3BtZdx"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("camao", "4J1MBDZo48T9MMvyzijVnjVTGqfkhXnEhbEseHaLkipq"), // verify: from "camaoSOL"
         PoolInfo::new("infinite_lux", "4R1L9q6sRopHKtQD1rpd7tBnUcu1jduXD3C6LfX3ViaV"),
         PoolInfo::new("project_super", "4SdQDBVsdS6CkfZrBMi9woJPACF62C3PBrkZ6UfiaqDt"),
@@ -106,23 +140,23 @@ static POOLS_ACTIVE: Lazy<Vec<PoolInfo>> = Lazy::new(|| {
         PoolInfo::new("unnamed_jrgfKTd1", "4mDGwGiohbHSW9qppbU3MsUd6i3RQqxoGseBP7m3YT4h"), // TODO: name
         PoolInfo::new("moonpay", "4qi96eZUEEmHS9caLK54sL5LU15LicRAbR1mQ77DEbLt"),
         PoolInfo::new("pine_stake", "4rcNs6cvpVFSU8iPT1JKzK81PXq82vffFwuuETQHJdgr"),
-        PoolInfo::new("unnamed_urbanCMk", "4wNpvPYAgiJoFkXawtyfnnEecK8FF932J8YFraj4hzTu"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_urbanCMk", "4wNpvPYAgiJoFkXawtyfnnEecK8FF932J8YFraj4hzTu"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("pumpkin_s", "51BsDVZKfFSphgKReCJyEHRVkrSj9827PX3L9KmryJWA"),
         PoolInfo::new("ice", "57RrmRqAyha3jT6Z3RZom6EfwRm1q61Rw4Fk9hj4345E"), // verify: from "iceSOL"
         PoolInfo::new("reflect", "5BKPEg79DJytryo7tUvBm8s6zjv5wSpVxTuSd8Xd3M83"),
         PoolInfo::new("vybe", "5Bsdsw84hcDhCssMnNSUjWx3EqvfD3dV8AX2BGSRuMZa"),
         PoolInfo::new("katexbt", "5CVW3Ao9PjcW5NwLims7L5fG3JJz8e8td9iyiJNNhVJj"),
-        PoolInfo::new("unnamed_PPPGdj9y", "5FcHFpFuXyX4jW7jW1PLLzsqiqpZ6a1tUwjpsFQ4haRd"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_PPPGdj9y", "5FcHFpFuXyX4jW7jW1PLLzsqiqpZ6a1tUwjpsFQ4haRd"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("yonta_labs", "5M1L2SzLNX6EjXsix8zNfZ4agnk3YoimkXWMndejmet5"),
         PoolInfo::new("digital", "5PRaMuxEBsRr579yDZYcxsds8Lc1WSJD8ugzx6iP3dK"),
         PoolInfo::new("sol_on_bags", "5RjeAvB5wGMS1jZ94Y3nLTa7YRbmsi1G32DRr6chjXiK"),
         PoolInfo::new("rakurai", "5U6ar3a2CQMRhu5d5xBA9E7Gi6xqx45wrXx38vKjU3L9"),
         PoolInfo::new("joetakayama", "5VofEUFou1NUWc5V7jM7ZgNAG7mcDyVhoxF9zpTih6X5"),
         PoolInfo::new("accretion", "5ZCEh3FVpR6yThtZ9o9ieWR6NipFT4xKUMGPuUMCkcCD"),
-        PoolInfo::new("unnamed_9dP2Mvpo", "5bQDcgmJv89yTkJBh8aThjnbTjcP6tnTqQkqrb6avFai"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_9dP2Mvpo", "5bQDcgmJv89yTkJBh8aThjnbTjcP6tnTqQkqrb6avFai"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("stake_city", "5csNBSTkMZTTkJfn9GdRPcSdM3UgoYvgrd7HPdAppDKS"),
         PoolInfo::new("hedgehog_spiky", "5dtGPn1NrSNF5PfHQ1D79GCFjd8ERuN338RktSm5FMAP"),
-        PoolInfo::new("unnamed_3dU15WCq", "5hJEDuWNUSvM2S2Ga5ERBNR8UoCn8EMqYWfhwmooJEJ"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_3dU15WCq", "5hJEDuWNUSvM2S2Ga5ERBNR8UoCn8EMqYWfhwmooJEJ"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("backpack", "5hhYv4b1Bt5sdMGYyyvpciwRbyUD1ZWeCmTaQcuvb7Eg"),
         PoolInfo::new("cudis", "5kpFGoqZFhrTho93mgAQrMgkdSB4ruaLxHga5M6FcZPr"),
         PoolInfo::new("sanctum_3", "5rxZiXpLsiuuyFpAocu5dbxmM6HUpygJ6aChmfr5s8Av"),
@@ -130,18 +164,18 @@ static POOLS_ACTIVE: Lazy<Vec<PoolInfo>> = Lazy::new(|| {
         PoolInfo::new("xandeum", "5uJR4QjnRPzHnt4R2FogtpbzQaUE2HKo3Z9yEYxPTi1H"),
         PoolInfo::new("definity", "5ugu8RogBq5ZdfGt4hKxKotRBkndiV1ndsqWCf7PBmST"),
         PoolInfo::new("STKE", "5vzKiHVuZNx1XQWQZQEcuqKaq4nfDp6LhuSvowQK2ayd"),
-        PoolInfo::new("unnamed_6eaFCH2y", "5yFALrVMqZUX9ft2Ph2WzsZKk2bm7UnYpJsmGyF8rzpG"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_6eaFCH2y", "5yFALrVMqZUX9ft2Ph2WzsZKk2bm7UnYpJsmGyF8rzpG"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("cogent", "5zycDbpcwkm2kqJLVnCqAMRQRSPtNrNLhcncyyZmWR4z"),
         PoolInfo::new("burndao", "66EXYBt7oPsx4rXXHHzxBQxwWehaAEDdZnwaQu7uR2sY"),
         PoolInfo::new("drift", "6727ZvQ2YEz8jky1Z9fqDFG5mYuAvC9G34o2MxwzmrUK"),
-        PoolInfo::new("unnamed_H5ei32wD", "6JoSBoEfq7ivq6Wo4bJnUC4ASKCh3msWnTYAwc5cjD2E"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_H5ei32wD", "6JoSBoEfq7ivq6Wo4bJnUC4ASKCh3msWnTYAwc5cjD2E"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("unnamed_EK985H9x", "6LtRu9eXwuUHeYXgBb65q6qYJM21U5FB1BYXdMWQyhPj"), // TODO: name
         PoolInfo::new("unnamed_5oXZDDCv", "6PKX9giWtPAdRyhiqMsQGUhTr8t1LewyTmf7KUfpz1aG"), // TODO: name
         PoolInfo::new("aep_life_form", "6Ri5EDyVUmzwePnsJYXVKP7oquDoViidiWodyyqagoZg"),
         PoolInfo::new("lantern", "6Sw4WcMTakZFrd19Q4hTH8ewiLxXXTCuBdVxAaneg1fo"),
         PoolInfo::new("blazestake", "6WecYymEARvjG5ZyqkrVQ6YkhPfujNzWpSPwNKXHCbV2"),
-        PoolInfo::new("unnamed_5PtSUaPP", "6WxWeTJEVFCorfN8irq5grPX2AkjdEsm1gmgFXNR3cnu"), // TODO: name; stale: cached balance
-        PoolInfo::new("unnamed_5rQq5CQ7", "6Y6X3MEhEnvFwXCD5QmY43sx6njmzLMMYUX6ngrNPvDQ"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_5PtSUaPP", "6WxWeTJEVFCorfN8irq5grPX2AkjdEsm1gmgFXNR3cnu"), // TODO: name; stale: balance recomputed live
+        PoolInfo::new("unnamed_5rQq5CQ7", "6Y6X3MEhEnvFwXCD5QmY43sx6njmzLMMYUX6ngrNPvDQ"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("unnamed_B9En3QZW", "6eXiw7sVCMFcHT9cCqRQwxwJVVGvSzWBeqQN7gWTK3Ee"), // TODO: name
         PoolInfo::new("lotus", "6iKy6m3xu2ACMAzxWW66bPbgb71D1aPH46FbdAhV8io8"), // verify: from "lotusSOL"
         PoolInfo::new("jito", "6iQKfEyhr3bZMotVkW6beNZz5CPAkiwvgV2CTje9pVSS"),
@@ -150,25 +184,25 @@ static POOLS_ACTIVE: Lazy<Vec<PoolInfo>> = Lazy::new(|| {
         PoolInfo::new("binance_2", "75NPzpxoh8sXGuSENFMREidq6FMzEx4g2AfcBEB6qjCV"),
         PoolInfo::new("fragmetric", "77Hj6qqjZpqBSLRdJyfk159K9bF5sAyDEFd62GjPqniK"),
         PoolInfo::new("intel", "7F7CwNxpsjk46bNrjpw9hveMHKZc1kT46Hr3icGJF7g8"), // verify: from "intelSOL"
-        PoolInfo::new("unnamed_muPhLCLW", "7Fd8SYpEkhbsWGfV8NSykaVYpjAq6PmD7Xqy49kAQFRB"), // TODO: name; stale: cached balance
-        PoolInfo::new("unnamed_BxSG7EpT", "7HiwmgWqzynCUG69JE4HmfWZZYtV5KBYjeEEQSVJQvHz"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_muPhLCLW", "7Fd8SYpEkhbsWGfV8NSykaVYpjAq6PmD7Xqy49kAQFRB"), // TODO: name; stale: balance recomputed live
+        PoolInfo::new("unnamed_BxSG7EpT", "7HiwmgWqzynCUG69JE4HmfWZZYtV5KBYjeEEQSVJQvHz"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("unnamed_FcrNvf1b", "7MVEkencEzNrm6EU6YeTwYCx4toFts8baQvUZCSdoNMA"), // TODO: name
         PoolInfo::new("unnamed_2usmhkW9", "7NdW6sU68yRCUNNuuDF2G9fQJXVkJPnCydyxPQh8dx1Y"), // TODO: name
         PoolInfo::new("dogwif", "7STPYcDtmhgsg2XbyB7PwnNXwWkWKxc8gzycHmT32PXr"),
-        PoolInfo::new("unnamed_3DuPtyTA", "7TdbUsGdmK2PfyLYQmnvJJcK6xWrs2AFtHjc575WRsmW"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_3DuPtyTA", "7TdbUsGdmK2PfyLYQmnvJJcK6xWrs2AFtHjc575WRsmW"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("wen", "7bfnwncXe7R34K7BSggjYEA6kCuwvpjjtKuCY4hkhpD2"),
         PoolInfo::new("defidevcorp", "7cWNhDsHe1m36ttDkJVBgbee1hRFvPqWZT2iWaBAyYGW"),
         PoolInfo::new("polar", "7cbsCAuHagZq7mx3EmNpQWSoxkCjGfxdGd7d19DntRVb"), // verify: from "polarSOL"
-        PoolInfo::new("unnamed_5TnTqbru", "7p7FZphWSizDATFqbTAaA3atUkS7HuJXGb8jcMnBPmPw"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_5TnTqbru", "7p7FZphWSizDATFqbTAaA3atUkS7HuJXGb8jcMnBPmPw"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("orca", "7zo3q61Sefdg3X5JLgVnYM48D7qMUhYMPmQkC8yhbSTE"),
         PoolInfo::new("health", "84WcERTbzhHscRWWsm7Xx5vSUQn19nLmQKcWm5VEpnH4"),
         PoolInfo::new("unnamed_5koaThu1", "8EWtZwo2L2rnNLCtfmYicGzFGDnj1jP48UcG5H42Z75D"), // TODO: name
         PoolInfo::new("solana_id", "8WXgf6CpKNq1RS3Hy1mpGrMYdAT798kC2DReTPTZLzfH"),
         PoolInfo::new("unnamed_GhK84y34", "8X3sExDr4UcWsyV5Mm7Sg81oup6GxaiLAoLsrcFREa2N"), // TODO: name
-        PoolInfo::new("unnamed_Bnks1YdM", "8bqKkyYd33mKcVwVgrcpQpP3Eogp4BprZRBL8krGPTsi"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_Bnks1YdM", "8bqKkyYd33mKcVwVgrcpQpP3Eogp4BprZRBL8krGPTsi"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("stakr_space", "8hYPhXDCDczXLhWZ6i5WNUjmS5kav51eV4RZ2EpseG5V"),
         PoolInfo::new("unnamed_EhmfESAf", "8jVc7KaXHHvKseAjoRd5JA7DGLEC5cFKwyJBiTK2Zttt"), // TODO: name
-        PoolInfo::new("unnamed_41gUpczA", "8mJE6mDLCaGuo3SyoL2mt4ZVr695ELP2qcUDhrzg3mmL"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_41gUpczA", "8mJE6mDLCaGuo3SyoL2mt4ZVr695ELP2qcUDhrzg3mmL"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("magic_eden", "8qKdoNUFqcsWuKxiRPjjSo4S467N3WBi7PuM844KnfVB"),
         PoolInfo::new("the_chimpions", "8r1we5gARtq96VJ6zuSEpdgZ9Y1Jqw6wQFQtj78VJFoP"),
         PoolInfo::new("coleta", "8tR9T5FY9qAeBhYkgLwnUdpsnKS3yCtgA5YhE4QS6q7v"),
@@ -180,7 +214,7 @@ static POOLS_ACTIVE: Lazy<Vec<PoolInfo>> = Lazy::new(|| {
         PoolInfo::new("unnamed_5Lad2buK", "92njzPrnqXq5F75Y5hMYV9jBhPXEzXL2x57AZm6sWVu2"), // TODO: name
         PoolInfo::new("hylo_sol_plus", "92rS1uTEmcATAjap6hW3M34jbNt67kK214PiSkbn25uK"),
         PoolInfo::new("nansen", "92xZLN9vyki6jrqaLk9hEZa4vQsaGBtSRahS3yYJXxeG"),
-        PoolInfo::new("unnamed_qxUwXfCT", "9ATyBkLwhk48riNDzG1ka54ksgU2Tdt7bZ8aJygDK9ni"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_qxUwXfCT", "9ATyBkLwhk48riNDzG1ka54ksgU2Tdt7bZ8aJygDK9ni"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("gate_io", "9BadxcrgcZ1in6CfVMsU6PHU45rzLrEjcd4FQMjXNbM5"),
         PoolInfo::new("unnamed_Hot2TiG8", "9BxPrUpYi98t4UWvreocmrc7KtBcBWaFDgeBH5zXhP4j"), // TODO: name
         PoolInfo::new("t_stake", "9EB9Z4YgQZn2F7NaF9iSHBUySTeMbSXQjmpVZBt8xr6c"),
@@ -194,11 +228,11 @@ static POOLS_ACTIVE: Lazy<Vec<PoolInfo>> = Lazy::new(|| {
         PoolInfo::new("lifinity", "9Ydzb2u5GUnwWHw1xwaVNZcZeaUrqHe6LmeisbML1KQ5"),
         PoolInfo::new("unnamed_3k8cCTWY", "9p66eSpzjupmw9unX4tVYg2ftjuXkEGNFjqSBG1mVPMa"), // TODO: name
         PoolInfo::new("defi_station", "9r3GQeRydDb4Zv2K6zXGWY5ikjwSV5krE89hAAEnmRBC"),
-        PoolInfo::new("ender", "9v9PwBGVnPxMDTrJqEEd5gQc13tgmnDHybcqVDqoE7fm"), // verify: from "enderSOL"; stale: cached balance
+        PoolInfo::new("ender", "9v9PwBGVnPxMDTrJqEEd5gQc13tgmnDHybcqVDqoE7fm"), // verify: from "enderSOL"; stale: balance recomputed live
         PoolInfo::new("pine", "9wdjKcLu4V1VNzYytnSdfub4CGRBhKpM4aZpGUdcAgxv"),
         PoolInfo::new("unnamed_SAVEY1fV", "9yWcz4S27nXKpsVmWqaimphCUnFo441JUvwkzmvRWys3"), // TODO: name
-        PoolInfo::new("unnamed_CrNf4Krw", "A2xeWAFZUMA8ZUskS6SBR5dFAoDjHrA4ATYgheHE2izB"), // TODO: name; stale: cached balance
-        PoolInfo::new("unnamed_CsPctShb", "A3uSVwYkbYnZDie7vPzKVB8mhs7rL9v85R8NcpbCcRDF"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_CrNf4Krw", "A2xeWAFZUMA8ZUskS6SBR5dFAoDjHrA4ATYgheHE2izB"), // TODO: name; stale: balance recomputed live
+        PoolInfo::new("unnamed_CsPctShb", "A3uSVwYkbYnZDie7vPzKVB8mhs7rL9v85R8NcpbCcRDF"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("portugal", "A8vgVnLhuxANkxkWuk8665YsW9XEjs2vSqZNuUZUGWb"),
         PoolInfo::new("laine_stake_token", "AAbVVaokj2VSZCmSU5Uzmxi6mxrG1n6StW9mnaWwN6cv"),
         PoolInfo::new("stronghold_lst", "ABCTazdzA7j6CHbnuetnWuvpeKh2XmxqVP75D8KJfsSK"),
@@ -214,7 +248,7 @@ static POOLS_ACTIVE: Lazy<Vec<PoolInfo>> = Lazy::new(|| {
         PoolInfo::new("nordic", "AxH3gxpEsXku8n2o4mYQX7obifRUgUWrTyrsc7Abmg32"),
         PoolInfo::new("dain", "AxZbpxUvfVcgT9V5AyvMbZGMicJD6rHmcKfaq3iLCkTn"), // verify: from "dainSOL"
         PoolInfo::new("unnamed_8YNRNkFb", "B47uK6nXjs99mTy6c4oYcspRdpxhFnHnmxsdrs8yNRcD"), // TODO: name
-        PoolInfo::new("unnamed_AJMaj81Q", "B4rqsXDBSFH64L6fk3A9mWeU8ip8Te6se1uURpLmNSew"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_AJMaj81Q", "B4rqsXDBSFH64L6fk3A9mWeU8ip8Te6se1uURpLmNSew"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("hanabi", "B7oQQtF7Wdzp7acSqpp5KWWigpywipBN84NVeosf7CxA"),
         PoolInfo::new("thugbirdz", "BAUL1gQ6YkM8eoC7VXyHwbyHGproLJZpSpbo6wywmYe"),
         PoolInfo::new("uwu", "BCnhgdfcgg5aG2a9vAVfnW65Unxt7Qj3YnDyCS4AHfqX"),
@@ -222,33 +256,33 @@ static POOLS_ACTIVE: Lazy<Vec<PoolInfo>> = Lazy::new(|| {
         PoolInfo::new("ded", "BQXDa4DHjHsLNGnE7JhTvhoCuy9Gjzasofxa8QTchYRV"), // verify: from "DEDsol"
         PoolInfo::new("stazzy", "BTnAmxeEKQUKMdKSDNCzhriUAddXny95bjuqSnmrSx6G"),
         PoolInfo::new("pesky_penguins", "BaBrnRoSyVWu4oaSZGQqEUwz6A41xvCtUotpA2UrxvDL"),
-        PoolInfo::new("unnamed_J4dERi1i", "BaQ5BQ2tShQsG6gxSAXZbG6F9jKWMXxASTa8fBgoQab2"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_J4dERi1i", "BaQ5BQ2tShQsG6gxSAXZbG6F9jKWMXxASTa8fBgoQab2"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("daopool", "BbyX1GwUNsfbcoWwnkZDo8sqGmwNDzs2765RpjyQ1pQb"),
-        PoolInfo::new("unnamed_GC62r3MJ", "BcNh5r1bbLrAkyPZkzLTM44mxPHWE1Ya9f3Jep7enE3P"), // TODO: name; stale: cached balance
-        PoolInfo::new("unnamed_EA9TbD19", "Biz7MshcU9i2CWdipxQREjH3vVQTMVtFkmPNvYBHZ2Dd"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_GC62r3MJ", "BcNh5r1bbLrAkyPZkzLTM44mxPHWE1Ya9f3Jep7enE3P"), // TODO: name; stale: balance recomputed live
+        PoolInfo::new("unnamed_EA9TbD19", "Biz7MshcU9i2CWdipxQREjH3vVQTMVtFkmPNvYBHZ2Dd"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("redelegate", "BoTyh5ptDLbZCbr8yyHkxiwCF3oCkc4477vSc4Wrtujg"),
         PoolInfo::new("luna", "BoxKB3pQd9JxSHtkCfWuaxSjEmb1y9nYfjqpV4iwnwP6"), // verify: from "LunaSOL"
         PoolInfo::new("dynosol", "BqPJdYKKpReEfXHv8kgdmRcBfLToBSHpt1qThtb52GSs"),
-        PoolInfo::new("unnamed_GqEpdFbi", "C3WQQ6SdKg9DY4n2F7r9BCjiS8eU8YK8VTcyhytWUPZZ"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_GqEpdFbi", "C3WQQ6SdKg9DY4n2F7r9BCjiS8eU8YK8VTcyhytWUPZZ"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("unnamed_3kebgZxC", "C6xBUyuGtrMEcBuh7WKf9K6cVvtQVyEC3nR3DaSTYpaW"), // TODO: name
         PoolInfo::new("risk_freestacc", "CA7yTjzt8JgkyamhoNveQZP9TMMZFcUyDabsYWBZipt6"),
         PoolInfo::new("windfall", "CQRkqnVvLfscs1g5MUczYRdA3HBMQd3k7qtfFTd6XYc1"),
         PoolInfo::new("watchtower", "CRF1nzFsGDBtg4gsHMUaHCECTz19kJrGsjQQayyFKA7F"),
         PoolInfo::new("unnamed_9WuJv5W4", "CTCB72j6RqkzmuzASqfQx6RdhS3RD5nfYicVq5Nd8tDu"), // TODO: name
         PoolInfo::new("unnamed_GutG5bcm", "CVVUc2Rgj3PeXeepNjxEBHqEfd2nNMdavXeWWx7DP2Yq"), // TODO: name
-        PoolInfo::new("unnamed_9QKdRD3g", "CaFsSmBD7iG1nqty9gcBVMGYEEawtW2sENuW3oCKyEVa"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_9QKdRD3g", "CaFsSmBD7iG1nqty9gcBVMGYEEawtW2sENuW3oCKyEVa"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("alpha", "D1eBo8GuSE3ozAVfwf1iSeZXtpzyjoFK3AcHcGiCHhPZ"), // verify: from "Alpha SOL"
         PoolInfo::new("anz", "D5CRQAGAF2N6jejgjcnzZCg3oEVU6Kjrk1qAKJJsPxaT"), // verify: from "anzSOL"
         PoolInfo::new("tax", "D62EBDqhdqUexqGbhyBvWGWGfqSNT8Cev9JYqW871Ryi"), // verify: from "taxSOL"
         PoolInfo::new("unnamed_3e8Cymde", "D8iG47yDtRRnwE3eXyN5nMJoRn55BTKEoMv46eiTrWYA"), // TODO: name
         PoolInfo::new("dual", "D9JhMGji95NwKhfwiLxThjqLsBJ6V98gpEzMz8s78Set"), // verify: from "Dual SOL"
-        PoolInfo::new("unnamed_ECicezrN", "DB9qQhF3GGWxw4tMBbjiznWLCLa9UxCZUigEtzogw9zc"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_ECicezrN", "DB9qQhF3GGWxw4tMBbjiznWLCLa9UxCZUigEtzogw9zc"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("pengu", "DCRYPZbPkSddAAt3BdU8Sz6oAnwhgREsSzDFJhPh6cbd"),
         PoolInfo::new("maw", "DCnS9jSwtDsXxEnFQC4tQKm8NDbZMkfi4zut4vpWkHRG"),
-        PoolInfo::new("unnamed_7vjXLJWQ", "DCoFwFc8vroqnbtEV7HTybEiQWr4dqUSy2UPP9WDfvsQ"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_7vjXLJWQ", "DCoFwFc8vroqnbtEV7HTybEiQWr4dqUSy2UPP9WDfvsQ"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("adra_lst", "DJ5zc5UhPCAbFhudnw1RqrgcQimUzh5th6WEGtTN12NS"),
         PoolInfo::new("udder_chaos", "DMj2ivDgS8y26H9CojejgkmivgmKrr1QWLDWurLaaizB"),
-        PoolInfo::new("unnamed_2WwgnKfu", "DQ5sxbJvovkkq83Uu2cq5zS531sAwpDLrQHGhpUT9Y2m"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_2WwgnKfu", "DQ5sxbJvovkkq83Uu2cq5zS531sAwpDLrQHGhpUT9Y2m"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("delegate_liquid_staking", "DbTSPoidRbbjpUm5WyecaytURmpNv1WRqhGcjsPdS2o9"),
         PoolInfo::new("steaknet", "Dfrck4LsCWMebzDwjEY7Qg7Q8PGdACtyEctRWvzNj1Rm"),
         PoolInfo::new("unnamed_9N69d9o5", "DoJahc3Eqxoe8kAUWveu1srApZo19tLYLb6pJe11sofg"), // TODO: name
@@ -265,13 +299,13 @@ static POOLS_ACTIVE: Lazy<Vec<PoolInfo>> = Lazy::new(|| {
         PoolInfo::new("unnamed_9qrFrE5q", "EVhp44NGYxxrxhv2NyFyErEKcsiffvssju5K7C5xydye"), // TODO: name
         PoolInfo::new("unnamed_FL9w3Vmg", "EbG4Ti1ruYacPa94mQmicUxPwYGv5b8hAQPUV2pCsUgQ"), // TODO: name
         PoolInfo::new("goosefx", "EdDWp1EzFSLe7pMnFt6pgo6X8PbYApEpreq7bAzcp6Le"),
-        PoolInfo::new("unnamed_8yNXFjNE", "Ej13jgxPwoBzcwceyj8371d2kHHgE9Ars6SF692cXmXt"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_8yNXFjNE", "Ej13jgxPwoBzcwceyj8371d2kHHgE9Ars6SF692cXmXt"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("sanctum", "EjYFnQcNDmfYQqT5B2R2239i781D5wNXrqA2qx2gYJo1"),
         PoolInfo::new("unnamed_CjSZsihk", "EmWViXbym29aSDUEcPkkjv9gkqh6gPsYvgX7pWZDgF1y"), // TODO: name
         PoolInfo::new("trillium_liquid_staked_sol_tri1lst", "EnYhmDgKnHs56R2bwdcepirUVB7n991riGqxe9K4bXUH"),
         PoolInfo::new("tainaker", "EnyvfuWJBNbqXCPuyXMrdP78t9SJtq7rU9niwNcU7ir6"),
         PoolInfo::new("shinobi", "EpH4ZKSeViL5qAHA9QANYVHxdmuzbUH2T79f32DmSCaM"),
-        PoolInfo::new("unnamed_sfcKL419", "EtMhohKpZ5FhduNSppoUXvJRUMYTRaxQGcTkbC22hiKt"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_sfcKL419", "EtMhohKpZ5FhduNSppoUXvJRUMYTRaxQGcTkbC22hiKt"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("unnamed_9gbzydGw", "EyTn3xemnJk3wVioTUroPTwh628SgoCyMk6FxhjrmbYR"), // TODO: name
         PoolInfo::new("espres", "EzD116Ef44jnsiJonLN5BPYH8Hmt4paffh7w725MN31y"),
         PoolInfo::new("zippy", "F15nfVkJFAa3H4BaHEb6hQBnmiJZwPYioDiE1yxbc5y4"),
@@ -279,7 +313,7 @@ static POOLS_ACTIVE: Lazy<Vec<PoolInfo>> = Lazy::new(|| {
         PoolInfo::new("unnamed_ERhozr6u", "F6LLwairYCMHoAZqRUbCD8HgXmPag1D6YVVKAkS5L4Jb"), // TODO: name
         PoolInfo::new("unnamed_5mpBN1bo", "FFZTyrLxWQc5CprW2zR4g5tEhUXX9fJxE59gRKiSSwVB"), // TODO: name
         PoolInfo::new("juicy", "FKDyJz5tPUy1ArAUba7ziQLbMKzaivRnHiW4FHzCSE9t"),
-        PoolInfo::new("unnamed_9joVGc1X", "FMurKhPfmJZGuc8PddLKnbq3sq5SBFih1iiJ1VKVRSYo"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_9joVGc1X", "FMurKhPfmJZGuc8PddLKnbq3sq5SBFih1iiJ1VKVRSYo"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("layer33", "FQS7JfBjCUiSj6JRHZWqnuM8FNxnDrbaoErCXXe6fAj8"),
         PoolInfo::new("sentinel", "FQVNzbFUGoFeXkjbjNe29FeRWYpuEBwjt8gTuFS1bCf6"),
         PoolInfo::new("kuma", "FZ2F6rHLcaK7GfPpyfDBGofTjfJ3BnA8wMkXbnt21riT"), // verify: from "kumaSOL"
@@ -293,21 +327,21 @@ static POOLS_ACTIVE: Lazy<Vec<PoolInfo>> = Lazy::new(|| {
         PoolInfo::new("unnamed_5xF1ywsZ", "GBHPzZJ1zYyXu2aM28SUDvQv7dXxr4XyVSJbtWHujVFh"), // TODO: name
         PoolInfo::new("unnamed_6K1AL3ym", "GBi6NR1WEi43tzaq2ehmejS5Lm3nmBcKwkk2TMsQ5UKs"), // TODO: name
         PoolInfo::new("staking_facilities", "GYcF4ugBEBBeKMvzDtjBMj2ickUjnxxDiQ5gtjKnU5kT"),
-        PoolInfo::new("unnamed_DixapLLv", "Gb66gzCFENFBRqwqnAcDRnVr5mKcL6Ezf8gUKLcVwcjr"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_DixapLLv", "Gb66gzCFENFBRqwqnAcDRnVr5mKcL6Ezf8gUKLcVwcjr"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("vault", "GdNXJobf8fbTR5JSE7adxa6niaygjx4EEbnnRaDCHMMW"),
         PoolInfo::new("crypto_com", "GiqwVAud4dH939qajy4F33Cht84kzutxJnGHez4urXnJ"),
-        PoolInfo::new("unnamed_CriHHjea", "GmnaSX9RukGHzwSxpPpqxjvLu1Soewia77eSKhvFRDsy"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_CriHHjea", "GmnaSX9RukGHzwSxpPpqxjvLu1Soewia77eSKhvFRDsy"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("unnamed_HaLoPo2o", "GnTbmBYQPwZ1gRrcC2ioERKEvcGZfVFbRT3DGJ9S79Kd"), // TODO: name
         PoolInfo::new("gumshoe", "Gzr3jLjuGgjbMQi7Uan5jrUzrjWvZd54Lb4ftnhcQu8A"),
         PoolInfo::new("monkedao", "H1hSDP7xx9mtFncRDwgZpoyGB1qbVmqELtcPGNK6Lq94"),
         PoolInfo::new("redelegate_2", "H3eUeig9jkP2pTeDbP51xLchSm7fub3JwETcA5vL7Wzt"),
         PoolInfo::new("solayer", "H5rmot8ejBUWzMPt6E44h27xj5obbSz3jVuK4AsJpHmv"),
-        PoolInfo::new("unnamed_C5V1LcBC", "H9hzspKiEEH96skCaVkzqwd6gxzdjwZXnJi2nVi716m3"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_C5V1LcBC", "H9hzspKiEEH96skCaVkzqwd6gxzdjwZXnJi2nVi716m3"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("enhanced_linkage", "H9sni3kem3TCJuFtpi9swVbT8EAigBzP2J79v7TBMr1Y"),
         PoolInfo::new("guardian", "HEyY7sTzfFAPjf3eFsDP4wKx1NCNoGvvPxKBECT4ijgn"),
         PoolInfo::new("zerebro", "HQcb93QUhDbckYWmLYGGudNjdvfjk2p9WEJGsR3PGkSX"),
         PoolInfo::new("unnamed_popocGjo", "HUzBzmwRgi3mfZU4B8tBzCJ5tDxD74wRoTMZ3sYtWjKu"), // TODO: name
-        PoolInfo::new("unnamed_FujqyFf2", "HXdYQ5gixrY2H6Y9gqsD8kPM2JQKSaRiohDQtLbZkRWE"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_FujqyFf2", "HXdYQ5gixrY2H6Y9gqsD8kPM2JQKSaRiohDQtLbZkRWE"), // TODO: name; stale: balance recomputed live
         PoolInfo::new("paw", "HacNuw45yT7hcG8mFDLLxakrTJy7N4twN8Xk9Tvuq3SJ"), // verify: from "Paw SOL"
         PoolInfo::new("jpool", "HbJTxftxnXgpePCshA8FubsRj9MW4kfPscfuUfn44fnt"),
         PoolInfo::new("unnamed_EftfAMLX", "Hck8FfpbhWmsRA3iv48wZnU2istGHj2LuL7M1PHq6kYd"), // TODO: name
@@ -326,11 +360,12 @@ static POOLS_ACTIVE: Lazy<Vec<PoolInfo>> = Lazy::new(|| {
         PoolInfo::new("mallow", "hHt4Yg7FDj2JWQ5ExMMu1Btdahx2w5rmPKsvoXX3PtJ"),
         PoolInfo::new("chive", "t7cpiMhack8XCWkzioHPRLFx2rszY8c6vZBQQxbFehr"),
         PoolInfo::new("bulk", "tjbFnqBF8xwBbU7qg46mU5McehUVJLMU5gVryE25D9F"),
-        PoolInfo::new("unnamed_H94wNeKN", "vgida1m4TBMgqnjhbZQ6gbSC5Dasgyh6EXtxxDc2LRN"), // TODO: name; stale: cached balance
+        PoolInfo::new("unnamed_H94wNeKN", "vgida1m4TBMgqnjhbZQ6gbSC5Dasgyh6EXtxxDc2LRN"), // TODO: name; stale: balance recomputed live
         // ---- END GENERATED ----
     ]
 });
 
+#[rustfmt::skip]
 static POOLS_RETIRED: Lazy<Vec<PoolInfo>> = Lazy::new(|| {
     vec![
         // ---- RETIRED ----

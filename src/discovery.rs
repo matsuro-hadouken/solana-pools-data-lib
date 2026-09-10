@@ -211,7 +211,7 @@ pub fn parse_registry(src: &str) -> Result<Registry, String> {
     let mut reg = Registry::default();
     {
         let mut section = None;
-        for line in src.lines() {
+        for (n, line) in src.lines().enumerate() {
             let t = line.trim();
             if t.contains("---- MANUAL") && !t.contains("END") { section = Some(0); continue; }
             if t.contains("---- GENERATED") && !t.contains("END") { section = Some(1); continue; }
@@ -220,11 +220,29 @@ pub fn parse_registry(src: &str) -> Result<Registry, String> {
                 section = None;
                 continue;
             }
-            if let (Some(s), Some(e)) = (section, parse_entry(t)) {
-                match s {
+            let Some(s) = section else { continue };
+            match parse_entry(t) {
+                Some(e) => match s {
                     0 => reg.manual.push(e),
                     1 => reg.generated.push(e),
                     _ => reg.retired.push(e),
+                },
+                // Blank lines and comments are the only non-entry content a
+                // section may hold. Anything else is a malformed entry, and
+                // skipping it would drop a live API name in silence — which is
+                // exactly what `cargo fmt` does when it rewraps a long
+                // PoolInfo::new(..) call onto four lines. Hence the
+                // #[rustfmt::skip] on the statics, and hence this being an
+                // error rather than a shrug.
+                None if t.is_empty() || t.starts_with("//") => {}
+                None => {
+                    return Err(format!(
+                        "src/pools.rs:{}: {t:?} is inside a section marker but is not a complete \
+                         `PoolInfo::new(\"name\", \"authority\"),` entry. Each entry must stay on \
+                         one line; if `cargo fmt` wrapped it, restore the one-line form and keep \
+                         the `#[rustfmt::skip]` attribute on the statics.",
+                        n + 1
+                    ));
                 }
             }
         }
@@ -256,20 +274,31 @@ pub fn promote_derivable(reg: &mut Registry, derived: &HashSet<String>) {
 pub struct Candidate {
     pub authority: String,
     pub pool: String,
-    pub mint: String,
     pub sanctum_name: Option<String>,
     pub sanctum_symbol: Option<String>,
-    pub total_sol: f64,
+    /// The pool's cached balance was stale, so its SOL total was re-measured
+    /// live before it cleared `--min-sol`.
     pub stale: bool,
+    /// `--verify` found no stake accounts behind this newly-derived authority.
+    /// Not a rejection — a pool holding everything in reserve is legitimate —
+    /// but it needs a human's eye before the name freezes.
+    pub verify_empty: bool,
 }
 
 /// Trailing-comment components the generator owns and re-derives on every run.
-/// Everything else in a note — `TODO: name`, `verify: from ...`, a reviewer's
-/// hand-written annotation — belongs to whoever wrote it and is carried across
-/// untouched.
-const STALE_NOTE: &str = "stale: cached balance";
+/// Everything else in a note — `TODO: name`, `verify: from ...`, `verify: no
+/// stake accounts`, a reviewer's hand-written annotation — belongs to whoever
+/// wrote it and is carried across untouched.
+const STALE_NOTE: &str = "stale: balance recomputed live";
+/// Superseded spelling of `STALE_NOTE`, which said the opposite of what the
+/// generator does. Still listed in `MANAGED_NOTES` so a file carrying it gets
+/// cleaned up on the next run instead of accumulating both spellings.
+const STALE_NOTE_LEGACY: &str = "stale: cached balance";
 const RETIRED_NOTE: &str = "below threshold or no longer on-chain";
-const MANAGED_NOTES: &[&str] = &[STALE_NOTE, RETIRED_NOTE];
+/// Unmanaged on purpose: it must survive a run made without `--verify` and
+/// stick until a human resolves it.
+const EMPTY_NOTE: &str = "verify: no stake accounts";
+const MANAGED_NOTES: &[&str] = &[STALE_NOTE, STALE_NOTE_LEGACY, RETIRED_NOTE];
 
 /// Rebuild a note as `; `-separated components: everything the previous run
 /// left behind, minus the generator-owned markers, plus the ones that apply now.
@@ -329,12 +358,16 @@ pub fn assign_names(reg: &Registry, candidates: &[Candidate]) -> Registry {
     out.manual.retain(|e| !present.contains(e.authority.as_str()));
 
     for c in sorted {
-        let now: &[&str] = if c.stale { &[STALE_NOTE] } else { &[] };
+        let mut now: Vec<&str> = Vec::new();
+        if c.stale { now.push(STALE_NOTE); }
+        // `--verify` only inspects authorities that are not yet in the
+        // registry, so this never fires on the frozen path below.
+        if c.verify_empty { now.push(EMPTY_NOTE); }
         if let Some(existing) = frozen.get(&c.authority) {
             out.generated.push(Entry {
                 name: existing.clone(),
                 authority: c.authority.clone(),
-                note: merge_note(prev_notes.get(c.authority.as_str()).copied(), now),
+                note: merge_note(prev_notes.get(c.authority.as_str()).copied(), &now),
             });
             continue;
         }
@@ -368,7 +401,7 @@ pub fn assign_names(reg: &Registry, candidates: &[Candidate]) -> Registry {
         out.generated.push(Entry {
             name,
             authority: c.authority.clone(),
-            note: merge_note(note.as_deref(), now),
+            note: merge_note(note.as_deref(), &now),
         });
     }
     out
@@ -601,6 +634,39 @@ mod tests {
     }
 
     #[test]
+    fn rejects_a_rustfmt_wrapped_entry_instead_of_dropping_it() {
+        // `cargo fmt` rewraps any PoolInfo::new(..) call over 100 columns onto
+        // four lines. parse_entry needs the whole call on one line, so those
+        // entries used to vanish from the parse while parse_registry still
+        // returned Ok — and the next generator run, seeing the frozen binding
+        // gone, would rename a live public API key. The #[rustfmt::skip] on the
+        // statics prevents it; this makes the failure loud if it ever slips.
+        let src = concat!(
+            "// ---- GENERATED ----\n",
+            "        PoolInfo::new(\n",
+            "            \"unnamed_48S4Uzpv\",\n",
+            "            \"48S4UzpvcbeQVstZa5v1LKZuKPGrfvvCEPnkeJPVpump\",\n",
+            "        ), // TODO: name\n",
+            "// ---- END GENERATED ----\n",
+        );
+        let err = parse_registry(src).unwrap_err();
+        assert!(err.contains("src/pools.rs:2"), "error must name the line, got: {err}");
+        assert!(err.contains("rustfmt"), "error must point at the cause, got: {err}");
+    }
+
+    #[test]
+    fn blank_and_comment_lines_inside_a_section_are_still_allowed() {
+        let src = concat!(
+            "// ---- GENERATED ----\n",
+            "\n",
+            "        // a reviewer's note about the block below\n",
+            "        PoolInfo::new(\"jito\", \"6iQKfEyhr3bZMotVkW6beNZz5CPAkiwvgV2CTje9pVSS\"),\n",
+            "// ---- END GENERATED ----\n",
+        );
+        assert_eq!(parse_registry(src).unwrap().generated.len(), 1);
+    }
+
+    #[test]
     fn promotes_derivable_manual_entries() {
         // First run: Task 6 parked all 61 existing entries in MANUAL. The 28 whose
         // authorities are derivable belong in GENERATED.
@@ -671,11 +737,10 @@ mod tests {
         Candidate {
             authority: auth.into(),
             pool: pool.into(),
-            mint: "MintMintMintMintMintMintMintMintMintMintMin".into(),
             sanctum_name: name.map(String::from),
             sanctum_symbol: None,
-            total_sol: 100.0,
             stale: false,
+            verify_empty: false,
         }
     }
 
@@ -779,15 +844,52 @@ mod tests {
         let fresh_stale = assign_names(&Registry::default(), &[stale.clone()]);
         assert_eq!(
             fresh_stale.generated[0].note.as_deref(),
-            Some("TODO: name; stale: cached balance")
+            Some("TODO: name; stale: balance recomputed live")
         );
 
         // ...and clear again once the pool stops being stale, rather than
         // sticking to the entry forever.
         let third = assign_names(&second, &[stale]);
-        assert_eq!(third.generated[0].note.as_deref(), Some("TODO: name; stale: cached balance"));
+        assert_eq!(
+            third.generated[0].note.as_deref(),
+            Some("TODO: name; stale: balance recomputed live")
+        );
         let fourth = assign_names(&third, &[cand("A1", "PoolAddr12345", None)]);
         assert_eq!(fourth.generated[0].note.as_deref(), Some("TODO: name"));
+    }
+
+    #[test]
+    fn the_superseded_stale_note_is_cleaned_up_not_accumulated() {
+        // STALE_NOTE was renamed before release. merge_note filters managed
+        // markers by exact string, so the old spelling has to stay listed or a
+        // file already carrying it would end up with both.
+        let mut reg = Registry::default();
+        reg.generated.push(Entry {
+            name: "phantom".into(),
+            authority: "A1".into(),
+            note: Some("TODO: name; stale: cached balance".into()),
+        });
+        let mut stale = cand("A1", "PoolAddr12345", None);
+        stale.stale = true;
+        let out = assign_names(&reg, &[stale]);
+        assert_eq!(
+            out.generated[0].note.as_deref(),
+            Some("TODO: name; stale: balance recomputed live")
+        );
+    }
+
+    #[test]
+    fn an_empty_verified_authority_is_marked_and_the_mark_persists() {
+        // --verify finding no stake accounts behind a NEW authority must show
+        // up in the diff a human reviews, and must not evaporate on the next
+        // run (which may be made without --verify).
+        let mut c = cand("A1", "PoolAddr12345", Some("Phantom Staked SOL"));
+        c.verify_empty = true;
+        let first = assign_names(&Registry::default(), &[c]);
+        assert_eq!(first.generated[0].note.as_deref(), Some("verify: no stake accounts"));
+
+        let second = assign_names(&first, &[cand("A1", "PoolAddr12345", Some("Phantom Staked SOL"))]);
+        assert_eq!(second.generated[0].note.as_deref(), Some("verify: no stake accounts"));
     }
 
     #[test]

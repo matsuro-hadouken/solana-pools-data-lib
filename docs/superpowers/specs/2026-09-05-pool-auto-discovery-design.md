@@ -132,17 +132,22 @@ a human deletes entries.
 **Migration.** If an LST moves to a new pool address, its withdraw authority changes, so it
 appears as a new pool with a colliding slug and gets a `_2` suffix while the old entry is
 retained-and-commented. The generator cannot detect that these are the same operator —
-merging them is a human edit. Same-mint-different-authority is flagged to stderr so the
-operator sees the case rather than discovering it later.
+merging them is a human edit. *As shipped, no same-mint-different-authority warning is
+emitted:* the generator keeps no mint index, so a migration surfaces only as the `_2` entry
+appearing next to the retained original in the diff. What it does flag to stderr is the
+narrower case of two pools deriving the **same** authority, where it keeps the first
+deterministically.
 
 Rule 1 is the invariant: **the authority pubkey is the pool's identity; the name is a
 mutable label that the generator may add but never change.** Pool names are API keys, and a
 regeneration that renames `forward_industries` to `dumsol` would silently break every
 consumer keyed on the old name.
 
-Where the frozen name disagrees with the on-chain symbol, the generator appends a trailing
-comment (`// sanctum: dumSOL`) so divergences are visible and can be resolved by a
-deliberate human edit.
+*Not shipped:* the design called for a trailing `// sanctum: dumSOL` comment wherever the
+frozen name disagrees with the on-chain symbol. The generator emits no such note — a frozen
+entry keeps whatever note it already carried, plus the generator-owned markers
+(`stale: ...`, `below threshold ...`). Divergences are found by reading the Sanctum list,
+not from `src/pools.rs`.
 
 Name collisions between two different authorities are resolved by appending `_2`, `_3`,
 matching the existing registry convention. Measured: 2 collisions today (`binance` against
@@ -202,8 +207,10 @@ cargo run --example discover_pools -- --min-sol 1
 git diff                      # human reviews names
 ```
 
-Writes `src/pools.rs` in place via `--out` (default `src/pools.rs`). It must **not** use a
-stdout redirect: `> src/pools.rs` truncates the file at redirect time, before the process
+Writes `src/pools.rs` in place. The path is hardcoded — there is no `--out` flag, and the
+generator rejects every unrecognized argument by name, so passing one is a hard error rather
+than a silent no-op. Its only flags are `--min-sol <SOL>` and `--verify`. It must **not** use
+a stdout redirect: `> src/pools.rs` truncates the file at redirect time, before the process
 starts, destroying the MANUAL block and the existing name bindings the generator needs to
 read. Output goes to a sibling temp file and is renamed over the target only after a
 successful run.
@@ -268,8 +275,13 @@ PoolInfo::new("socean", "AzZRvyyMHBm8EHEksWxq4ozFL7JxLMydCDMGhqM6BVck"),
 // ---- END RETIRED ----
 ```
 
-The generator copies the MANUAL block through verbatim and rewrites only the GENERATED
-block. The public API of the module is unchanged.
+The generator rewrites all three blocks. MANUAL is not passed through verbatim: its entries
+are re-parsed and re-emitted from the same renderer as GENERATED, which sorts by authority
+and normalizes spacing. What survives is the content — each entry's name, authority and
+trailing `// note` — not the byte layout, and not any non-entry line, which the parser now
+rejects outright rather than dropping. Only text *outside* the markers is byte-preserved,
+which is why the "do not edit" guidance in `src/pools.rs` sits above `POOLS_ACTIVE` rather
+than inside a block. The public API of the module is unchanged.
 
 **First-run bootstrap.** The committed `src/pools.rs` has no markers today, so "abort when
 markers are missing" would make the first run impossible. When no markers are found, the
