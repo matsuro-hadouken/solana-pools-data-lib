@@ -81,6 +81,89 @@ pub fn derive_authority(
         .map_err(|_| DecodeError::OnCurve)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Slug {
+    /// Safe to emit as-is.
+    Clean(String),
+    /// Emit, but annotate for human review — the strip left very little behind.
+    Suspicious { slug: String, original: String },
+    /// Stripping consumed the name. Caller must fall back to `unnamed_*`.
+    Unusable,
+}
+
+/// Operator ground truth where the on-chain name is not what the entity is called.
+const ALIASES: &[(&str, &str)] = &[
+    ("GTSOL", "gate_io"),
+    ("dfdvSOL", "defidevcorp"),
+];
+
+pub fn alias_for(symbol: &str) -> Option<&'static str> {
+    ALIASES.iter().find(|(s, _)| *s == symbol).map(|(_, n)| *n)
+}
+
+/// Trailing LST boilerplate, longest-first so "Staked SOL" wins over "SOL".
+const BOILERPLATE: &[&str] = &[
+    "liquid staked solana", "liquid staked sol",
+    "staked solana", "wrapped solana", "restaked solana",
+    "staked sol", "wrapped sol", "restaked sol",
+    "solana", "sol",
+];
+
+pub fn slugify(sanctum_name: &str) -> Slug {
+    let lower = sanctum_name.trim().to_lowercase();
+    let mut core = lower.as_str();
+    let mut stripped = false;
+    let mut risky = false;
+    for suffix in BOILERPLATE {
+        if let Some(rest) = core.strip_suffix(suffix) {
+            let rest = rest.trim_end();
+            // The whole name was boilerplate: stripping consumed it, nothing
+            // legitimate is left to slug. Doc comment on Unusable says exactly
+            // this case.
+            if rest.is_empty() {
+                return Slug::Unusable;
+            }
+            core = rest;
+            stripped = true;
+            // "Staked SOL" (and its "liquid staked"/"staked solana" siblings) is
+            // the canonical, unambiguous LST suffix. "Wrapped"/"Restaked"/bare
+            // "SOL"/"Solana" are looser matches that can double as real brand
+            // words, so a short result from those needs a second look.
+            risky = !matches!(
+                *suffix,
+                "liquid staked solana" | "liquid staked sol" | "staked solana" | "staked sol"
+            );
+            break;
+        }
+    }
+
+    let slug: String = {
+        let mut out = String::new();
+        let mut pending_sep = false;
+        for ch in core.chars() {
+            if ch.is_ascii_alphanumeric() {
+                if pending_sep && !out.is_empty() {
+                    out.push('_');
+                }
+                pending_sep = false;
+                out.push(ch);
+            } else {
+                pending_sep = true;
+            }
+        }
+        out
+    };
+
+    if slug.len() < 3 {
+        return Slug::Unusable;
+    }
+    // A risky strip that left a single short token deserves a second look.
+    if stripped && risky && !slug.contains('_') && slug.len() <= 5 {
+        return Slug::Suspicious { slug, original: sanctum_name.to_string() };
+    }
+    Slug::Clean(slug)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,5 +235,48 @@ mod tests {
             .filter(|b| derive_authority(&pool, *b, &prog).is_err())
             .count();
         assert_eq!(failures, 118, "on-curve rejection rate changed; the off-curve check may be disabled");
+    }
+
+    #[test]
+    fn slugs_entity_names_not_tickers() {
+        // The registry convention is entity names (binance_2, kraken), not tickers.
+        assert_eq!(slugify("Phantom Staked SOL"), Slug::Clean("phantom".into()));
+        assert_eq!(slugify("Sanctum Staked SOL"), Slug::Clean("sanctum".into()));
+        assert_eq!(slugify("Jito Staked SOL"), Slug::Clean("jito".into()));
+        assert_eq!(
+            slugify("DeFi Development Corp Staked SOL"),
+            Slug::Clean("defi_development_corp".into())
+        );
+    }
+
+    #[test]
+    fn slugs_names_without_boilerplate() {
+        assert_eq!(slugify("The Vault"), Slug::Clean("the_vault".into()));
+        assert_eq!(slugify("JPOOL Solana Token"), Slug::Clean("jpool_solana_token".into()));
+    }
+
+    #[test]
+    fn refuses_to_eat_a_legitimate_brand() {
+        // Stripping must not consume the whole name. The freeze rule would make
+        // a mangled slug permanent API surface.
+        assert_eq!(slugify("Wrapped SOL"), Slug::Unusable);
+        assert_eq!(slugify("SOL"), Slug::Unusable);
+        assert_eq!(slugify("Staked SOL"), Slug::Unusable);
+    }
+
+    #[test]
+    fn flags_short_strips_for_review() {
+        // "Gate Wrapped SOL" -> "gate": real, but short enough to double-check.
+        assert_eq!(
+            slugify("Gate Wrapped SOL"),
+            Slug::Suspicious { slug: "gate".into(), original: "Gate Wrapped SOL".into() }
+        );
+    }
+
+    #[test]
+    fn aliases_beat_the_slug_rule() {
+        assert_eq!(alias_for("GTSOL"), Some("gate_io"));
+        assert_eq!(alias_for("dfdvSOL"), Some("defidevcorp"));
+        assert_eq!(alias_for("JitoSOL"), None);
     }
 }
