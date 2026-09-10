@@ -263,8 +263,41 @@ pub struct Candidate {
     pub stale: bool,
 }
 
+/// Trailing-comment components the generator owns and re-derives on every run.
+/// Everything else in a note — `TODO: name`, `verify: from ...`, a reviewer's
+/// hand-written annotation — belongs to whoever wrote it and is carried across
+/// untouched.
+const STALE_NOTE: &str = "stale: cached balance";
+const RETIRED_NOTE: &str = "below threshold or no longer on-chain";
+const MANAGED_NOTES: &[&str] = &[STALE_NOTE, RETIRED_NOTE];
+
+/// Rebuild a note as `; `-separated components: everything the previous run
+/// left behind, minus the generator-owned markers, plus the ones that apply now.
+///
+/// Replacing the note outright instead would make the generator non-idempotent:
+/// a pool that gets `// TODO: name` on run N is *frozen* on run N+1, and the
+/// frozen path would emit it with no note at all — silently deleting exactly
+/// the annotations a reviewer works from. Re-deriving the managed markers is
+/// what lets `stale:` disappear again once a pool's balance is fresh.
+fn merge_note(previous: Option<&str>, add: &[&str]) -> Option<String> {
+    let mut parts: Vec<&str> = previous
+        .map(|n| {
+            n.split(';')
+                .map(str::trim)
+                .filter(|p| !p.is_empty() && !MANAGED_NOTES.contains(p))
+                .collect()
+        })
+        .unwrap_or_default();
+    parts.extend(add);
+    (!parts.is_empty()).then(|| parts.join("; "))
+}
+
 pub fn assign_names(reg: &Registry, candidates: &[Candidate]) -> Registry {
     let frozen = reg.frozen_names();
+    let prev_notes: HashMap<&str, &str> = reg
+        .all()
+        .filter_map(|e| e.note.as_deref().map(|n| (e.authority.as_str(), n)))
+        .collect();
     let mut taken: HashSet<String> = reg.all().map(|e| e.name.clone()).collect();
 
     // Deterministic: sort by authority before handing out any suffix.
@@ -282,7 +315,7 @@ pub fn assign_names(reg: &Registry, candidates: &[Candidate]) -> Registry {
         out.retired.push(Entry {
             name: e.name.clone(),
             authority: e.authority.clone(),
-            note: Some("below threshold or no longer on-chain".into()),
+            note: merge_note(e.note.as_deref(), &[RETIRED_NOTE]),
         });
     }
 
@@ -296,12 +329,13 @@ pub fn assign_names(reg: &Registry, candidates: &[Candidate]) -> Registry {
     out.manual.retain(|e| !present.contains(e.authority.as_str()));
 
     for c in sorted {
+        let now: &[&str] = if c.stale { &[STALE_NOTE] } else { &[] };
         if let Some(existing) = frozen.get(&c.authority) {
-            let mut e = Entry { name: existing.clone(), authority: c.authority.clone(), note: None };
-            if c.stale {
-                e.note = Some("stale: cached balance".into());
-            }
-            out.generated.push(e);
+            out.generated.push(Entry {
+                name: existing.clone(),
+                authority: c.authority.clone(),
+                note: merge_note(prev_notes.get(c.authority.as_str()).copied(), now),
+            });
             continue;
         }
 
@@ -331,7 +365,11 @@ pub fn assign_names(reg: &Registry, candidates: &[Candidate]) -> Registry {
             n += 1;
         }
         taken.insert(name.clone());
-        out.generated.push(Entry { name, authority: c.authority.clone(), note });
+        out.generated.push(Entry {
+            name,
+            authority: c.authority.clone(),
+            note: merge_note(note.as_deref(), now),
+        });
     }
     out
 }
@@ -720,6 +758,36 @@ mod tests {
         assert_eq!(out.generated[0].authority, "P1");
         assert_eq!(out.generated[0].name, "phantom", "returning pool keeps its frozen name");
         assert!(out.retired.is_empty(), "returning pool must be removed from retired");
+    }
+
+    #[test]
+    fn notes_survive_the_next_run_and_staleness_is_re_derived() {
+        // Run N writes `// TODO: name` on a pool with no Sanctum name. On run
+        // N+1 that pool is frozen, and the frozen path used to emit it with no
+        // note at all — deleting every reviewer annotation on a GENERATED line
+        // and making the generator produce a different file on each run.
+        let first = assign_names(&Registry::default(), &[cand("A1", "PoolAddr12345", None)]);
+        assert_eq!(first.generated[0].note.as_deref(), Some("TODO: name"));
+
+        let second = assign_names(&first, &[cand("A1", "PoolAddr12345", None)]);
+        assert_eq!(second.generated, first.generated, "second run must reproduce the first");
+
+        // Staleness is generator-owned: it must appear when the cached balance
+        // goes stale on a new entry, not only on the run after.
+        let mut stale = cand("A1", "PoolAddr12345", None);
+        stale.stale = true;
+        let fresh_stale = assign_names(&Registry::default(), &[stale.clone()]);
+        assert_eq!(
+            fresh_stale.generated[0].note.as_deref(),
+            Some("TODO: name; stale: cached balance")
+        );
+
+        // ...and clear again once the pool stops being stale, rather than
+        // sticking to the entry forever.
+        let third = assign_names(&second, &[stale]);
+        assert_eq!(third.generated[0].note.as_deref(), Some("TODO: name; stale: cached balance"));
+        let fourth = assign_names(&third, &[cand("A1", "PoolAddr12345", None)]);
+        assert_eq!(fourth.generated[0].note.as_deref(), Some("TODO: name"));
     }
 
     #[test]
