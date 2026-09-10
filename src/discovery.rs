@@ -286,6 +286,15 @@ pub fn assign_names(reg: &Registry, candidates: &[Candidate]) -> Registry {
         });
     }
 
+    // A pool that dips below the threshold for one epoch and comes back is a
+    // candidate again. It must be promoted back out of retired (and out of
+    // manual, if that's where it was hand-added) before being pushed into
+    // generated below — otherwise it lives in two sections at once, which
+    // parse_registry rejects as a duplicate authority on the very next run
+    // and which double-counts it in get_all_pools() today.
+    out.retired.retain(|e| !present.contains(e.authority.as_str()));
+    out.manual.retain(|e| !present.contains(e.authority.as_str()));
+
     for c in sorted {
         if let Some(existing) = frozen.get(&c.authority) {
             let mut e = Entry { name: existing.clone(), authority: c.authority.clone(), note: None };
@@ -343,15 +352,47 @@ fn body(entries: &[Entry]) -> String {
         .collect()
 }
 
-/// Replace the text between each `---- X ----` / `---- END X ----` pair,
-/// leaving every byte outside the markers untouched. The accessors, the
-/// HashMap indexes and the test module all live outside them.
+/// True if `line`, once trimmed and stripped of a leading `//`, `///`, or
+/// `//!` comment prefix, IS exactly `marker` (e.g. `---- GENERATED ----`). A
+/// line that merely *mentions* the marker text inside a longer sentence — a
+/// header, a doc comment explaining the format — is not equal to it, so a
+/// decoy mention can never be mistaken for the real marker.
+fn is_marker_line(line: &str, marker: &str) -> bool {
+    let t = line.trim();
+    let rest = t.strip_prefix("//!").or_else(|| t.strip_prefix("///")).or_else(|| t.strip_prefix("//"));
+    rest.is_some_and(|r| r.trim() == marker)
+}
+
+/// Find the marker line and return the byte offsets bounding it (through
+/// its own trailing newline, if it has one).
+fn find_marker_line(src: &str, marker: &str) -> Option<(usize, usize)> {
+    let mut offset = 0;
+    for piece in src.split_inclusive('\n') {
+        if is_marker_line(piece, marker) {
+            return Some((offset, offset + piece.len()));
+        }
+        offset += piece.len();
+    }
+    None
+}
+
+/// Replace the text between a `---- X ----` marker line and its matching
+/// `---- END X ----` marker line, leaving every byte outside that span
+/// untouched. The accessors, the HashMap indexes and the test module all
+/// live outside them.
+///
+/// The end marker is searched for only in the text *after* the start
+/// marker, so a stray or out-of-order end marker can never be paired with
+/// it. Either a missing marker or an out-of-order pair fails safe: `src` is
+/// returned unchanged rather than emitting duplicated or truncated content.
 fn replace_region(src: &str, tag: &str, new_body: &str) -> String {
-    let open = format!("---- {tag}");
-    let close = format!("---- END {tag}");
-    let (Some(o), Some(c)) = (src.find(&open), src.find(&close)) else { return src.to_string() };
-    let body_start = src[o..].find('\n').map(|i| o + i + 1).unwrap_or(o);
-    let line_start = src[..c].rfind('\n').map(|i| i + 1).unwrap_or(c);
+    let open = format!("---- {tag} ----");
+    let close = format!("---- END {tag} ----");
+    let Some((_, body_start)) = find_marker_line(src, &open) else { return src.to_string() };
+    let Some((line_start_rel, _)) = find_marker_line(&src[body_start..], &close) else {
+        return src.to_string();
+    };
+    let line_start = body_start + line_start_rel;
     format!("{}{}{}", &src[..body_start], new_body, &src[line_start..])
 }
 
@@ -359,17 +400,31 @@ pub fn splice(existing: &str, reg: &Registry, provenance: &str) -> String {
     let mut out = replace_region(existing, "MANUAL", &body(&reg.manual));
     out = replace_region(&out, "GENERATED", &body(&reg.generated));
     out = replace_region(&out, "RETIRED", &body(&reg.retired));
+    rewrite_provenance_line(&out, provenance)
+}
 
-    // Provenance lives on one comment line that is rewritten in place.
+/// Rewrite only the `//! Provenance: ...` line, byte-for-byte everywhere
+/// else. `lines().join("\n")` would reflow the entire file — silently
+/// turning CRLF into LF outside the markers and adding a trailing newline
+/// where none existed — so splicing an already-spliced file would not
+/// reproduce the same bytes.
+fn rewrite_provenance_line(src: &str, provenance: &str) -> String {
     let stamp = format!("//! Provenance: {provenance}");
-    match out.lines().position(|l| l.starts_with("//! Provenance:")) {
-        Some(i) => {
-            let mut lines: Vec<&str> = out.lines().collect();
-            lines[i] = &stamp;
-            lines.join("\n") + "\n"
+    let mut offset = 0;
+    for piece in src.split_inclusive('\n') {
+        let (content, term) = match piece.strip_suffix("\r\n") {
+            Some(c) => (c, "\r\n"),
+            None => match piece.strip_suffix('\n') {
+                Some(c) => (c, "\n"),
+                None => (piece, ""),
+            },
+        };
+        if content.starts_with("//! Provenance:") {
+            return format!("{}{}{}{}", &src[..offset], stamp, term, &src[offset + piece.len()..]);
         }
-        None => format!("{stamp}\n{out}"),
+        offset += piece.len();
     }
+    format!("{stamp}\n{src}")
 }
 
 #[cfg(test)]
@@ -648,6 +703,26 @@ mod tests {
     }
 
     #[test]
+    fn returning_pool_is_promoted_out_of_retirement() {
+        // A pool that dips below the threshold for one epoch and recovers is a
+        // candidate again. Leaving the old entry in RETIRED while also adding a
+        // fresh one to GENERATED would duplicate its authority, and
+        // parse_registry rejects duplicate authorities — bricking the very next
+        // generator run.
+        let mut reg = Registry::default();
+        reg.retired.push(Entry { name: "phantom".into(), authority: "P1".into(), note: None });
+
+        let out = assign_names(&reg, &[cand("P1", "PoolP", Some("Phantom Staked SOL"))]);
+
+        let matches: Vec<_> = out.all().filter(|e| e.authority == "P1").collect();
+        assert_eq!(matches.len(), 1, "authority must appear exactly once across all sections");
+        assert_eq!(out.generated.len(), 1);
+        assert_eq!(out.generated[0].authority, "P1");
+        assert_eq!(out.generated[0].name, "phantom", "returning pool keeps its frozen name");
+        assert!(out.retired.is_empty(), "returning pool must be removed from retired");
+    }
+
+    #[test]
     fn collisions_suffix_deterministically_by_authority() {
         // Suffix order must not depend on input order, or _2/_3 could swap between
         // runs and break the freeze invariant for the pools it exists to protect.
@@ -698,5 +773,73 @@ mod tests {
         assert!(out.contains("get_pool_by_name"), "accessors must survive");
         assert!(out.contains("#[cfg(test)] mod tests"), "tests must survive");
         assert!(out.contains("NewAuth") && !out.contains("OldAuth"), "body replaced");
+    }
+
+    #[test]
+    fn splice_ignores_a_decoy_marker_mention_above_the_real_one() {
+        // A doc comment explaining the marker format (which Task 6 is about to
+        // hand-write into src/pools.rs) must not be mistaken for the marker
+        // itself, or replace_region locates the wrong span and eats everything
+        // between the decoy and the real end marker.
+        let existing = concat!(
+            "//! Sections are delimited by lines like ---- GENERATED ---- and its END pair.\n",
+            "pub fn get_pool_by_name(n: &str) -> Option<&PoolInfo> { todo!() }\n",
+            "// ---- GENERATED ----\n",
+            "        PoolInfo::new(\"old\", \"OldAuth\"),\n",
+            "// ---- END GENERATED ----\n",
+            "#[cfg(test)] mod tests { }\n",
+        );
+        let mut reg = Registry::default();
+        reg.generated.push(Entry { name: "new".into(), authority: "NewAuth".into(), note: None });
+
+        let out = splice(existing, &reg, "epoch 1028");
+        assert!(out.contains("get_pool_by_name"), "accessors must survive the decoy");
+        assert!(out.contains("#[cfg(test)] mod tests"), "tests must survive the decoy");
+        assert!(out.contains("Sections are delimited by"), "the decoy comment line itself must survive");
+        assert!(out.contains("NewAuth") && !out.contains("OldAuth"), "body replaced, not the decoy region");
+    }
+
+    #[test]
+    fn replace_region_fails_safe_when_end_marker_precedes_start_marker() {
+        // With a naive whole-file `find`, an END marker appearing earlier in
+        // the file than the real start marker pairs with it anyway, and the
+        // span between them gets emitted twice. A missing marker already fails
+        // safe by returning the input unchanged; out-of-order must do the same.
+        let existing = concat!(
+            "// ---- END GENERATED ----\n",
+            "        PoolInfo::new(\"old\", \"OldAuth\"),\n",
+            "// ---- GENERATED ----\n",
+        );
+        let out = replace_region(existing, "GENERATED", "REPLACED\n");
+        assert_eq!(out, existing, "out-of-order markers must fail safe, not duplicate content");
+    }
+
+    #[test]
+    fn splice_only_rewrites_the_provenance_line_not_the_whole_file() {
+        // lines().join("\n") would silently convert CRLF to LF outside the
+        // markers and add a trailing newline where none existed — neither is a
+        // byte the provenance rewrite is allowed to touch.
+        let existing = concat!(
+            "//! Provenance: epoch 1000\r\n",
+            "// ---- GENERATED ----\r\n",
+            "// ---- END GENERATED ----\r\n",
+            "// trailer\r\n",
+        );
+        let reg = Registry::default();
+        let out = splice(existing, &reg, "epoch 1028");
+        assert!(out.contains("//! Provenance: epoch 1028"));
+        assert!(out.contains("// trailer\r\n"), "CRLF outside the provenance line must survive, got: {out:?}");
+    }
+
+    #[test]
+    fn splice_is_idempotent_on_its_own_output() {
+        // The generator must be idempotent: re-running splice on a file it
+        // already produced must reproduce the same bytes, not drift.
+        let mut reg = Registry::default();
+        reg.generated.push(Entry { name: "a".into(), authority: "Aaa".into(), note: None });
+        let existing = "//! Provenance: epoch 1000\n// ---- GENERATED ----\n// ---- END GENERATED ----\n";
+        let once = splice(existing, &reg, "epoch 1028");
+        let twice = splice(&once, &reg, "epoch 1028");
+        assert_eq!(once, twice, "splice must be idempotent on its own output");
     }
 }
