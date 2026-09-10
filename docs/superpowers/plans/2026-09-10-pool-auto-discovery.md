@@ -655,7 +655,7 @@ git commit -m "feat(discovery): registry parsing with first-run bootstrap"
 - Consumes: `Registry`, `Entry`, `Slug`, `slugify`, `alias_for`, `StakePool`
 - Produces:
   - `pub struct Candidate { pub authority: String, pub pool: String, pub mint: String, pub sanctum_name: Option<String>, pub sanctum_symbol: Option<String>, pub total_sol: f64, pub stale: bool }`
-  - `pub fn assign_names(reg: &Registry, candidates: &[Candidate]) -> Registry`
+  - `pub fn assign_names(reg: &Registry, candidates: &[Candidate]) -> Registry` — also demotes previously-generated pools that are no longer candidates into `retired`
   - `pub fn splice(existing: &str, reg: &Registry, provenance: &str) -> String`
 
 - [ ] **Step 1: Write the failing tests**
@@ -703,6 +703,35 @@ fn new_pools_get_slugged_names() {
 fn unnamed_pools_fall_back_to_pool_prefix() {
     let out = assign_names(&Registry::default(), &[cand("AuthA", "PoolAddr12345", None)]);
     assert_eq!(out.generated[0].name, "unnamed_PoolAddr");
+}
+
+#[test]
+fn pools_that_drop_out_are_retired_not_deleted() {
+    // Global constraint: a name, once emitted, is never deleted. A pool that
+    // falls below --min-sol or leaves the chain moves to RETIRED, where
+    // get_pool_by_name() still resolves it.
+    let mut reg = Registry::default();
+    reg.generated.push(Entry { name: "gone".into(), authority: "GoneAuth".into(), note: None });
+    reg.generated.push(Entry { name: "stays".into(), authority: "StaysAuth".into(), note: None });
+
+    let out = assign_names(&reg, &[cand("StaysAuth", "PoolS", Some("Jito Staked SOL"))]);
+
+    assert_eq!(out.generated.len(), 1);
+    assert_eq!(out.generated[0].name, "stays");
+    assert_eq!(out.retired.len(), 1);
+    assert_eq!(out.retired[0].name, "gone", "dropped pool must be retired, never deleted");
+    assert!(out.retired[0].note.as_deref().unwrap().contains("below threshold"));
+}
+
+#[test]
+fn retired_pools_keep_their_names_reserved() {
+    // A retired name must stay taken, or a new pool could claim it and two
+    // different authorities would answer to the same API key over time.
+    let mut reg = Registry::default();
+    reg.retired.push(Entry { name: "phantom".into(), authority: "OldAuth".into(), note: None });
+
+    let out = assign_names(&reg, &[cand("NewAuth", "PoolN", Some("Phantom Staked SOL"))]);
+    assert_eq!(out.generated[0].name, "phantom_2");
 }
 
 #[test]
@@ -788,6 +817,18 @@ pub fn assign_names(reg: &Registry, candidates: &[Candidate]) -> Registry {
 
     let mut out = reg.clone();
     out.generated.clear();
+
+    // A previously-generated pool that is no longer a candidate has dropped
+    // below the threshold or left the chain. It is retired, never deleted:
+    // deleting it would remove a live API key.
+    let present: HashSet<&str> = sorted.iter().map(|c| c.authority.as_str()).collect();
+    for e in reg.generated.iter().filter(|e| !present.contains(e.authority.as_str())) {
+        out.retired.push(Entry {
+            name: e.name.clone(),
+            authority: e.authority.clone(),
+            note: Some("below threshold or no longer on-chain".into()),
+        });
+    }
 
     for c in sorted {
         if let Some(existing) = frozen.get(&c.authority) {
