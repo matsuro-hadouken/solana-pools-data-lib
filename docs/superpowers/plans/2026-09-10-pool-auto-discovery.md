@@ -662,6 +662,28 @@ git commit -m "feat(discovery): registry parsing with first-run bootstrap"
 
 ### Task 5: Name assignment and deterministic rendering
 
+> **Superseded — read before reusing this task's code.** The implementation blocks below
+> shipped two Critical defects, both caught by review with probe tests. `src/discovery.rs`
+> at commit 791a3f6 is authoritative; the code here is retained only to show what was
+> asked for.
+>
+> 1. **A returning pool bricked the generator.** `assign_names` never removed a returning
+>    authority from `retired`/`manual`, so a pool that dipped below `--min-sol` and
+>    recovered appeared in two sections at once. `parse_registry` then rejects the file the
+>    generator itself wrote, with `duplicate authority`. Fixed by `retain`-ing both sections
+>    against the candidate set before the assignment loop. The original
+>    `retired_pools_keep_their_names_reserved` test missed this because it used two
+>    *different* authorities.
+> 2. **`replace_region` matched markers as bare substrings.** Any earlier mention of the
+>    marker text — a doc comment, a header line — was treated as the marker, destroying
+>    every byte between it and the real END marker. Fixed with whole-line equality after
+>    stripping `//`, `///`, or `//!`, plus scoping the END search to the region after OPEN.
+>    Note that "line starts with `//` and contains the tag" is *not* sufficient: a `//!`
+>    doc-comment sentence quoting the marker satisfies it.
+> 3. Out-of-order markers duplicated content instead of failing safe.
+> 4. `lines().join("\n")` reflowed the whole file, converting CRLF and breaking
+>    idempotency for one iteration; replaced with in-place provenance rewriting.
+
 **Files:**
 - Modify: `src/discovery.rs`
 
