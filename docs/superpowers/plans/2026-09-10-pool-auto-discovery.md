@@ -409,14 +409,25 @@ pub fn slugify(sanctum_name: &str) -> Slug {
     let lower = sanctum_name.trim().to_lowercase();
     let mut core = lower.as_str();
     let mut stripped = false;
+    let mut risky = false;
     for suffix in BOILERPLATE {
         if let Some(rest) = core.strip_suffix(suffix) {
             let rest = rest.trim_end();
-            // Only strip if something meaningful survives.
-            if !rest.is_empty() {
-                core = rest;
-                stripped = true;
+            // The whole name was boilerplate ("Wrapped SOL", "SOL"): nothing
+            // legitimate survives, so refuse rather than emitting the unstripped
+            // name as if it were a brand.
+            if rest.is_empty() {
+                return Slug::Unusable;
             }
+            core = rest;
+            stripped = true;
+            // "Staked SOL" and its siblings are the canonical, unambiguous LST
+            // suffix. "Wrapped"/"Restaked"/bare "SOL" double as real brand
+            // words, so a short result from those needs a human to confirm.
+            risky = !matches!(
+                *suffix,
+                "liquid staked solana" | "liquid staked sol" | "staked solana" | "staked sol"
+            );
             break;
         }
     }
@@ -441,8 +452,8 @@ pub fn slugify(sanctum_name: &str) -> Slug {
     if slug.len() < 3 {
         return Slug::Unusable;
     }
-    // A strip that left a single short token deserves a second look.
-    if stripped && !slug.contains('_') && slug.len() <= 5 {
+    // A risky strip that left a single short token deserves a second look.
+    if stripped && risky && !slug.contains('_') && slug.len() <= 5 {
         return Slug::Suspicious { slug, original: sanctum_name.to_string() };
     }
     Slug::Clean(slug)
