@@ -1,7 +1,8 @@
 # Pool Auto-Discovery and Naming
 
 **Date:** 2026-09-05
-**Status:** Approved, not yet implemented
+**Status:** Approved. Audited over three rounds; see Audit Record.
+**Plan:** `docs/superpowers/plans/2026-09-10-pool-auto-discovery.md`
 
 ## Problem
 
@@ -63,12 +64,10 @@ let authority = Pubkey::create_program_address(
 
 Verified: reproduces all 28 currently-derivable registry entries exactly.
 
-An earlier draft computed this as a bare `sha256(pool || "withdraw" || bump || program_id ||
-"ProgramDerivedAddress")` to avoid a dependency. That is wrong at a trust boundary. If the
-bump is corrupt, offset 97 drifts, or a fork changes the layout, a bare hash silently emits
-an on-curve pubkey that is not a valid PDA and cannot own anything — a garbage authority
-written into the registry as though it were real. `create_program_address` costs one dev-
-dependency and turns that silent corruption into a hard error.
+The off-curve check is not optional. If the bump is corrupt, offset 97 drifts, or a fork
+changes the layout, a bare hash silently yields an on-curve pubkey that is not a valid PDA
+and cannot own anything — a garbage authority written into the registry as though it were
+real. `create_program_address` turns that silent corruption into a hard error.
 
 `solana-pubkey` provides both the derivation and base58, so it *replaces* `sha2` and `bs58`
 rather than adding to them.
@@ -361,8 +360,7 @@ The generator is an operator tool run by hand; it fails loudly and writes nothin
 - Sanctum list unreachable: abort non-zero rather than regenerating with every name
   degraded to `unnamed_*`, which would look like mass renaming in the diff.
 - Any account whose `data.len() != 611`, or whose `pool_mint` is all zeros: skip, warn to
-  stderr, continue. (An earlier draft said "shorter than 266 bytes", which no longer covers
-  `last_update_epoch` at 274..282.)
+  stderr, continue.
 - A program returning zero `dataSize: 611` accounts: abort. That means the layout or program
   ID assumption has broken, not that every pool vanished.
 - Existing `src/pools.rs` unparseable or missing a section marker: abort non-zero. Losing
@@ -410,3 +408,26 @@ custodial positions concentrate on one or two.
 
 The blocker is naming, not detection: this channel produces a review queue of unlabelled
 pubkeys, not names. Revisit if the manual list becomes a burden.
+
+## Audit Record
+
+Reviewed in three adversarial rounds. Defects found and closed:
+
+| # | Defect | Resolution |
+|---|---|---|
+| 1 | First run impossible — spec aborted on missing section markers, but `pools.rs` has none | One-time bootstrap classifying the flat list against the pre-threshold derived set |
+| 2 | Bare-sha256 PDA skipped the off-curve check, so a bad bump emits a garbage authority | `create_program_address`, which errors `InvalidSeeds` |
+| 3 | `solana-pubkey` MSRV (1.81+) exceeds the repo's declared 1.75 | Optional dependency behind a `discover` feature; `cargo test` at 1.75 unaffected |
+| 4 | `--verify` aborted only if *all* new authorities were empty, so one diverged program still emitted wrong authorities | Per-program cohort abort; marked-empty new entries withheld |
+| 5 | `POOLS_BY_AUTHORITY` silently overwrites duplicates; tests covered duplicate names only | Duplicate-authority test across all three blocks; generator aborts on collision |
+| 6 | Retention by trailing comment is invisible to code — dead pools would accumulate into `fetch_all_pools()` | `RETIRED` section plus `get_active_pools()` |
+| 7 | `total_lamports` is cached, not live; 41/261 pools >10 epochs stale | Asymmetric: soft comment for known pools, live recomputation before admitting a new stale one |
+| 8 | Naming from ticker symbol (`gtsol`) violated the registry's entity convention (`gate`) | Sanctum `name` field with boilerplate stripped, plus alias overrides |
+| 9 | Boilerplate strip can eat a legitimate brand, and the freeze rule makes it permanent | Empty/<3-char strips fall back to `unnamed_*`; suspicious strips flagged for review |
+| 10 | Collision suffixes could swap between runs, breaking the freeze invariant | New colliding pools sorted by authority pubkey before suffixing |
+
+Verified against mainnet at epoch 1028, not inferred: `pool_mint`@162 located by byte-search
+of Jito's live account; bump@97 derivation reproduces all 28 currently-derivable registry
+authorities; six previously-untracked pools (sctmSOL, PSOL, dfdvSOL, GTSOL and two unnamed,
+~6.5M SOL combined) confirmed to return stake accounts through the library's exact
+`memcmp @12` query.
