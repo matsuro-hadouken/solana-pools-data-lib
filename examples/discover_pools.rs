@@ -197,12 +197,14 @@ async fn main() -> Result<(), BoxErr> {
     let spliced = splice(&existing, &updated, &provenance);
 
     // splice() fails safe: a marker line it cannot match exactly leaves that
-    // region untouched and hands back the input. parse_registry matches markers
-    // with `contains`, so src/pools.rs can parse fine and still splice to a
-    // no-op — the generator would then rename an unchanged file into place and
-    // report success. Re-parse the output and confirm it holds what we wrote.
-    // (Byte-comparing against `existing` cannot be the test: an idempotent
-    // re-run legitimately reproduces the same bytes.)
+    // region untouched and hands back the input. parse_registry now matches
+    // markers with the same exact predicate, so the two agree on GENERATED —
+    // but a file missing (or misspelling) only its MANUAL or RETIRED markers
+    // still parses fine and splices those regions to a no-op, and the generator
+    // would rename an unchanged file into place and report success. Re-parse
+    // the output and confirm it holds what we wrote. (Byte-comparing against
+    // `existing` cannot be the test: an idempotent re-run legitimately
+    // reproduces the same bytes.)
     let round_trip =
         parse_registry(&spliced).map_err(|e| format!("spliced output does not re-parse: {e}"))?;
     if entry_keys(&round_trip) != entry_keys(&updated) {
@@ -210,7 +212,8 @@ async fn main() -> Result<(), BoxErr> {
             "splice wrote nothing usable: {} entries in, {} entries back out. Each \
              section marker in {out_path} must be a line that is exactly \
              `// ---- MANUAL ----` (and GENERATED / RETIRED, plus their \
-             `// ---- END X ----` pairs) — replace_region matches them exactly.",
+             `// ---- END X ----` pairs) — the parser and the splicer both \
+             match them exactly.",
             entry_keys(&updated).len(),
             entry_keys(&round_trip).len()
         )

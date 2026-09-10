@@ -34,8 +34,12 @@ impl PoolInfo {
 // This block of guidance lives OUTSIDE the section markers on purpose: the
 // generator replaces every byte between an opening marker line and its closing
 // pair, so anything written inside a marked region is erased on the next run.
-// (It also deliberately spells the markers below with a placeholder rather than
-// their real text, so this comment cannot be mistaken for a marker itself.)
+// (It also spells the markers below with a `NAME` placeholder rather than their
+// real text. That is belt-and-braces, not a requirement: both the parser and the
+// splicer match markers exactly, so a mention inside a sentence is already not a
+// marker. Keeping the placeholder means a human skimming this file can still
+// tell guidance from a real marker at a glance — and a future regression back to
+// loose matching would not silently turn this paragraph into one.)
 //
 // Rules the generator relies on:
 //
@@ -47,11 +51,15 @@ impl PoolInfo {
 //     authority->name bindings that ARE this crate's public API.
 //   * A section marker must be a line that is EXACTLY `// ---- NAME ----`,
 //     where NAME is MANUAL, GENERATED or RETIRED, each closed by an equally
-//     exact `// ---- END NAME ----`. A marker embedded in a longer sentence is
-//     not matched, and the region it was meant to open is left untouched.
+//     exact `// ---- END NAME ----`. The parser that reads this file and the
+//     splicer that rewrites it apply that same test, so they cannot disagree
+//     about where a section starts and ends. A marker embedded in a longer
+//     sentence is not matched, and the region it was meant to open is left
+//     untouched.
 //   * Inside the markers, only one-line `PoolInfo::new("name", "authority"),`
 //     entries, blank lines, and `//` comments are legal. Anything else aborts
-//     the generator.
+//     the generator. A trailing `// note` on an entry, or a standalone comment,
+//     may say anything at all — including marker text; neither is a marker.
 //   * The MANUAL section is hand-curated in content only. The generator
 //     re-renders it and re-sorts it by authority on every run; trailing
 //     `// notes` are carried across, arbitrary non-entry code is not.

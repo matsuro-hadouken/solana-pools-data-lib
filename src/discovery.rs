@@ -204,8 +204,18 @@ fn parse_entry(line: &str) -> Option<Entry> {
     Some(Entry { name, authority, note })
 }
 
+/// Reads a file the same way `splice` writes one: a line is a section marker
+/// only if it IS a marker, by the one predicate both sides share
+/// (`comment_body`). Matching loosely here — `contains("END GENERATED")` — made
+/// the parser and the splicer disagree about what a marker is, and an ENTRY
+/// whose trailing note happened to carry that text (notes hold `verify: from
+/// "<sanctum name>"`, and MANUAL notes are hand-written) closed the section and
+/// took itself and every following entry out of the parse. The splicer, matching
+/// exactly, then spliced perfectly around them: the frozen authority->name
+/// bindings were gone, so the next run renamed live API keys, and the file
+/// looked correctly generated. Exactness is what keeps the two in step.
 pub fn parse_registry(src: &str) -> Result<Registry, String> {
-    if !src.contains("---- GENERATED") {
+    if !src.lines().any(|l| is_marker_line(l, "---- GENERATED ----")) {
         return Err("no section markers in src/pools.rs; run Task 6 first".into());
     }
     let mut reg = Registry::default();
@@ -213,12 +223,15 @@ pub fn parse_registry(src: &str) -> Result<Registry, String> {
         let mut section = None;
         for (n, line) in src.lines().enumerate() {
             let t = line.trim();
-            if t.contains("---- MANUAL") && !t.contains("END") { section = Some(0); continue; }
-            if t.contains("---- GENERATED") && !t.contains("END") { section = Some(1); continue; }
-            if t.contains("---- RETIRED") && !t.contains("END") { section = Some(2); continue; }
-            if t.contains("END MANUAL") || t.contains("END GENERATED") || t.contains("END RETIRED") {
-                section = None;
-                continue;
+            match comment_body(t) {
+                Some("---- MANUAL ----") => { section = Some(0); continue; }
+                Some("---- GENERATED ----") => { section = Some(1); continue; }
+                Some("---- RETIRED ----") => { section = Some(2); continue; }
+                Some("---- END MANUAL ----" | "---- END GENERATED ----" | "---- END RETIRED ----") => {
+                    section = None;
+                    continue;
+                }
+                _ => {}
             }
             let Some(s) = section else { continue };
             match parse_entry(t) {
@@ -423,15 +436,25 @@ fn body(entries: &[Entry]) -> String {
         .collect()
 }
 
-/// True if `line`, once trimmed and stripped of a leading `//`, `///`, or
-/// `//!` comment prefix, IS exactly `marker` (e.g. `---- GENERATED ----`). A
-/// line that merely *mentions* the marker text inside a longer sentence — a
-/// header, a doc comment explaining the format — is not equal to it, so a
-/// decoy mention can never be mistaken for the real marker.
-fn is_marker_line(line: &str, marker: &str) -> bool {
+/// `line`'s comment text: trimmed, stripped of a leading `//`, `///` or `//!`
+/// prefix, and trimmed again. `None` if the line is not a comment.
+///
+/// The single definition of "what a marker line looks like", shared by the
+/// parser (`parse_registry`) and the splicer (`replace_region`) so the two
+/// cannot drift apart about it again.
+fn comment_body(line: &str) -> Option<&str> {
     let t = line.trim();
-    let rest = t.strip_prefix("//!").or_else(|| t.strip_prefix("///")).or_else(|| t.strip_prefix("//"));
-    rest.is_some_and(|r| r.trim() == marker)
+    let rest = t.strip_prefix("//!").or_else(|| t.strip_prefix("///")).or_else(|| t.strip_prefix("//"))?;
+    Some(rest.trim())
+}
+
+/// True if `line` IS exactly `marker` (e.g. `---- GENERATED ----`) as a
+/// comment. A line that merely *mentions* the marker text — a header, a doc
+/// comment explaining the format, an entry's trailing note quoting a pool name
+/// — is not equal to it, so a decoy mention can never be mistaken for the real
+/// marker.
+fn is_marker_line(line: &str, marker: &str) -> bool {
+    comment_body(line) == Some(marker)
 }
 
 /// Find the marker line and return the byte offsets bounding it (through
@@ -652,6 +675,82 @@ mod tests {
         let err = parse_registry(src).unwrap_err();
         assert!(err.contains("src/pools.rs:2"), "error must name the line, got: {err}");
         assert!(err.contains("rustfmt"), "error must point at the cause, got: {err}");
+    }
+
+    #[test]
+    fn an_entry_note_mentioning_a_marker_does_not_close_the_section() {
+        // The worst of the three bugs the loose `contains` matcher produced.
+        // `verify: from "<name>"` notes quote the community-submitted Sanctum
+        // name, and MANUAL notes are hand-written, so a note carrying "END
+        // GENERATED" is reachable. With `contains`, this line closed the
+        // section AND skipped itself before parse_entry ran — so "beta" and
+        // "gamma" silently left the parse (no error, the malformed-line check
+        // never fired) while the splicer, matching exactly, spliced perfectly
+        // around them. Two frozen public API names lost, file looks fine.
+        let src = concat!(
+            "// ---- GENERATED ----\n",
+            "        PoolInfo::new(\"alpha\", \"AuthAlpha\"),\n",
+            "        PoolInfo::new(\"beta\", \"AuthBeta\"), // verify: from \"END GENERATED SOL\"\n",
+            "        PoolInfo::new(\"gamma\", \"AuthGamma\"),\n",
+            "// ---- END GENERATED ----\n",
+        );
+        let r = parse_registry(src).unwrap();
+        assert_eq!(
+            r.generated.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
+            vec!["alpha", "beta", "gamma"]
+        );
+        assert_eq!(r.generated[1].note.as_deref(), Some("verify: from \"END GENERATED SOL\""));
+    }
+
+    #[test]
+    fn an_entry_note_mentioning_an_opening_marker_does_not_open_a_section() {
+        // The mirror case: a note carrying an OPENING tag must not re-point the
+        // section cursor, or entries land in the wrong section — which moves a
+        // generator-owned entry into MANUAL (or worse, RETIRED) behind a
+        // reviewer's back.
+        let src = concat!(
+            "// ---- MANUAL ----\n",
+            "        PoolInfo::new(\"alpha\", \"AuthAlpha\"), // verify: from \"---- GENERATED ----\"\n",
+            "// ---- END MANUAL ----\n",
+            "// ---- GENERATED ----\n",
+            "        PoolInfo::new(\"beta\", \"AuthBeta\"),\n",
+            "// ---- END GENERATED ----\n",
+        );
+        let r = parse_registry(src).unwrap();
+        assert_eq!(r.manual.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), vec!["alpha"]);
+        assert_eq!(r.manual[0].note.as_deref(), Some("verify: from \"---- GENERATED ----\""));
+        assert_eq!(r.generated.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), vec!["beta"]);
+    }
+
+    #[test]
+    fn a_comment_mentioning_marker_text_is_still_just_a_comment() {
+        // Not a marker (it is not equal to one) and not an error either — the
+        // malformed-entry check must not start rejecting reviewers' prose.
+        let src = concat!(
+            "// ---- GENERATED ----\n",
+            "        // the ---- END GENERATED ---- line below closes this block\n",
+            "        PoolInfo::new(\"alpha\", \"AuthAlpha\"),\n",
+            "        /// ---- MANUAL ---- is where hand-added pools go\n",
+            "        PoolInfo::new(\"beta\", \"AuthBeta\"),\n",
+            "// ---- END GENERATED ----\n",
+        );
+        let r = parse_registry(src).unwrap();
+        assert_eq!(
+            r.generated.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
+            vec!["alpha", "beta"]
+        );
+        assert!(r.manual.is_empty());
+    }
+
+    #[test]
+    fn the_real_registry_parses_to_its_committed_shape() {
+        // The parser and the file ship together; a marker-matching change that
+        // silently drops a section would be invisible in every synthetic
+        // fixture above. 294 names, all frozen public API.
+        let r = parse_registry(include_str!("pools.rs")).unwrap();
+        assert_eq!(r.manual.len(), 33, "MANUAL count moved");
+        assert_eq!(r.generated.len(), 261, "GENERATED count moved");
+        assert_eq!(r.retired.len(), 0, "RETIRED count moved");
     }
 
     #[test]
