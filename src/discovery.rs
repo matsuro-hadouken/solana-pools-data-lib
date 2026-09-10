@@ -1131,13 +1131,19 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_verified_authority_is_marked_and_the_mark_persists() {
-        // --verify finding no stake accounts behind a NEW authority must show
-        // up in the diff a human reviews, and must not evaporate on the next
-        // run (which may be made without --verify).
+    fn an_empty_existing_authority_is_marked_and_the_mark_persists() {
+        // --verify finding no stake accounts behind an authority ALREADY in the
+        // registry marks it: the name ships, so it is never withdrawn, but the
+        // silence has to show up in the diff a human reviews and must not
+        // evaporate on the next run (which may be made without --verify). A NEW
+        // authority that verifies empty is withheld instead, and never reaches
+        // this function at all.
+        let mut reg = Registry::default();
+        reg.generated.push(Entry { name: "phantom".into(), authority: "A1".into(), note: None });
         let mut c = cand("A1", "PoolAddr12345", Some("Phantom Staked SOL"));
         c.verify_empty = true;
-        let first = assign_names(&Registry::default(), &[c]);
+        let first = assign_names(&reg, &[c]);
+        assert_eq!(first.generated[0].name, "phantom");
         assert_eq!(first.generated[0].note.as_deref(), Some("verify: no stake accounts"));
 
         let second = assign_names(&first, &[cand("A1", "PoolAddr12345", Some("Phantom Staked SOL"))]);

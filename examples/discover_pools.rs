@@ -184,48 +184,19 @@ async fn main() -> Result<(), BoxErr> {
     let mut candidates = Vec::new();
     for (program, mut cohort) in cohorts {
         if verify {
-            let mut fresh = 0usize;
-            let mut empty: HashSet<String> = HashSet::new();
-            for c in cohort.iter().filter(|c| !known.contains(&c.authority)) {
-                fresh += 1;
-                if stake_account_count(&http, &rpc_url, &c.authority).await? == 0 {
-                    // A zero can be a transient RPC answer, or a read at a slot
-                    // where the accounts had not landed yet. The spec requires
-                    // one retry at a later slot before anything is concluded.
-                    tokio::time::sleep(RECHECK_DELAY).await;
-                    if stake_account_count(&http, &rpc_url, &c.authority).await? == 0 {
-                        empty.insert(c.authority.clone());
-                    }
-                }
-            }
-            if fresh > 0 && empty.len() == fresh {
-                eprintln!(
-                    "ABORT: all {fresh} new authorities under {program} returned no stake \
-                     accounts; derivation for this program looks broken"
-                );
-                std::process::exit(1);
-            }
-            // A single empty authority is not proof of a broken derivation — a
-            // pool can hold everything in reserve — but it is equally what one
-            // mis-derived authority looks like, and a NEW authority's name
-            // freezes the moment it ships. The two outcomes are not symmetric:
-            // withholding a real pool costs one later run, freezing a wrong name
-            // costs a public API key forever. So a still-empty NEW authority is
-            // withheld and reported, never emitted. (Withholding applies only
-            // here; an authority already in the registry that goes quiet keeps
-            // its name and is merely annotated.)
-            cohort.retain(|c| {
-                let hold = empty.contains(&c.authority);
-                if hold {
-                    eprintln!(
-                        "verify: WITHHELD new authority {} (pool {}, program {program}): no stake \
-                         accounts at two slots. Re-run once it holds stake, or confirm the \
-                         derivation by hand.",
-                        c.authority, c.pool
-                    );
-                }
-                !hold
-            });
+            // The existence question, asked of every candidate in the cohort —
+            // new and already-registered alike. `stake_account_count` answers
+            // "does this derived authority own anything at all", a deliberately
+            // looser filter than the balance path uses; see `stake_accounts`.
+            let (client, url) = (&http, &rpc_url);
+            verify_cohort(
+                &mut cohort,
+                &known,
+                program,
+                RECHECK_DELAY,
+                move |authority| async move { stake_account_count(client, url, &authority).await },
+            )
+            .await?;
         }
         candidates.extend(cohort);
     }
@@ -293,6 +264,79 @@ async fn main() -> Result<(), BoxErr> {
         updated.generated.len(),
         updated.retired.len()
     );
+    Ok(())
+}
+
+/// Apply `--verify` to one program's cohort, in place: annotate the entries
+/// that have gone quiet, withhold the new authorities that verify empty, and
+/// refuse the cohort outright if the program's derivation looks broken.
+///
+/// Every candidate is queried, and what an empty result means depends on
+/// whether the authority already ships (spec, "--verify"):
+///
+/// * NEW authority, empty — re-query after `delay` and, if still empty,
+///   WITHHOLD it from the output and report it. A zero can be a transient RPC
+///   answer or a read at a slot where the accounts had not landed yet, and
+///   withholding is a decision you can get wrong, so it is worth a second read
+///   of the chain. Withholding a real pool costs one later run; freezing a
+///   wrong name onto a public API key costs it forever.
+/// * EXISTING authority, empty — one query, no retry, no withholding: set
+///   `verify_empty` so the entry carries a `verify: no stake accounts` note
+///   into the diff a human reviews. A live public name is never withdrawn, so
+///   the mark is advisory rather than a decision; a retry would add `delay` per
+///   quiet pool, and ~81 of the registry's pools sit under 10 SOL and
+///   legitimately keep everything in reserve.
+/// * EVERY new authority in the cohort empty — not a quiet pool, a broken
+///   derivation for this program. Abort before anything is written.
+///
+/// `count` and `delay` are parameters so this policy — the part that decides
+/// which names freeze — can be exercised without a network.
+async fn verify_cohort<F, Fut>(
+    cohort: &mut Vec<Candidate>,
+    known: &HashSet<String>,
+    program: &str,
+    delay: Duration,
+    count: F,
+) -> Result<(), BoxErr>
+where
+    F: Fn(String) -> Fut,
+    Fut: std::future::Future<Output = Result<usize, BoxErr>>,
+{
+    let mut fresh = 0usize;
+    let mut empty: HashSet<String> = HashSet::new();
+    for c in cohort.iter_mut() {
+        let found = count(c.authority.clone()).await?;
+        if known.contains(&c.authority) {
+            c.verify_empty = found == 0;
+            continue;
+        }
+        fresh += 1;
+        if found == 0 {
+            tokio::time::sleep(delay).await;
+            if count(c.authority.clone()).await? == 0 {
+                empty.insert(c.authority.clone());
+            }
+        }
+    }
+    if fresh > 0 && empty.len() == fresh {
+        return Err(format!(
+            "ABORT: all {fresh} new authorities under {program} returned no stake accounts; \
+             derivation for this program looks broken"
+        )
+        .into());
+    }
+    cohort.retain(|c| {
+        let hold = empty.contains(&c.authority);
+        if hold {
+            eprintln!(
+                "verify: WITHHELD new authority {} (pool {}, program {program}): no stake \
+                 accounts at two slots. Re-run once it holds stake, or confirm the \
+                 derivation by hand.",
+                c.authority, c.pool
+            );
+        }
+        !hold
+    });
     Ok(())
 }
 
@@ -422,27 +466,38 @@ async fn fetch_stake_pools(
     Ok(out)
 }
 
-/// Every stake account the pool behind `authority` actually manages, carrying
-/// account metadata only — the zero-length dataSlice transfers no account data,
-/// which keeps a several-thousand-account response small.
+/// Stake accounts naming `authority`, carrying account metadata only — the
+/// zero-length dataSlice transfers no account data, which keeps a
+/// several-thousand-account response small. Layout: state u32 @0,
+/// rent_exempt_reserve u64 @4, authorized.staker @12, authorized.withdrawer @44.
 ///
-/// BOTH authorities have to match, because that is the test the SPL stake-pool
-/// program itself applies: it only touches a stake account whose
-/// `authorized.staker` AND `authorized.withdrawer` are the pool's withdraw
-/// authority. Filtering on the staker alone counted accounts anyone could
-/// create — name the pool PDA as staker, keep the withdrawer for yourself — so
-/// an unrelated party could hold an abandoned pool above `--min-sol` with stake
-/// the pool cannot move. Layout: state u32 @0, rent_exempt_reserve u64 @4,
-/// authorized.staker @12, authorized.withdrawer @44.
+/// `manageable_only` picks WHICH question is asked, and the two callers ask
+/// different ones on purpose. They are documented here, together, because this
+/// pair has now drifted twice: first as two hand-built requests that silently
+/// diverged, then as one shared request that answered the wrong question for
+/// one of them.
 ///
-/// Both callers share this one request shape on purpose. They used to build
-/// their own, and the pair silently drifted into measuring different things.
+/// * `true` — "how much stake can this pool actually move?" (`live_stake_sol`).
+///   BOTH authorities must match, because that is the test the SPL stake-pool
+///   program itself applies: it only touches a stake account whose
+///   `authorized.staker` AND `authorized.withdrawer` are the pool's withdraw
+///   authority. On the staker alone this counts accounts anyone can create —
+///   name the pool PDA as staker, keep the withdrawer for yourself — so an
+///   unrelated party could hold an abandoned pool above `--min-sol` with stake
+///   the pool cannot move.
 ///
-/// The two-authority filter is right *here* and wrong in `src/rpc.rs`. Every
-/// authority that reaches this function was derived from an SPL-family
-/// StakePool account, so the program's own rule applies to all of them. The
-/// library fetches for the whole registry, MANUAL entries included, and those
-/// are not SPL pools: measured on mainnet, `marinade`
+/// * `false` — "does this derived authority own anything at all?"
+///   (`stake_account_count`, the `--verify` existence check). A mis-derived PDA
+///   owns nothing under either filter, so the withdrawer term buys this
+///   question no accuracy — and it costs: a Sanctum fork that does not set the
+///   withdrawer identically would verify as empty and abort a run that should
+///   pass, or annotate a healthy pool. Staker only.
+///
+/// The two-authority filter is right for the balance question *here* and wrong
+/// in `src/rpc.rs`. Every authority that reaches this function was derived from
+/// an SPL-family StakePool account, so the program's own rule applies to all of
+/// them. The library fetches for the whole registry, MANUAL entries included,
+/// and those are not SPL pools: measured on mainnet, `marinade`
 /// (4bZ6o3eUUNXhKuqjdCnCoPAoLgWiuLYixKaxoa8PpiKk) has 145 stake accounts and
 /// 2.29M SOL under the staker filter and **zero** under both, because Marinade
 /// keeps staker and withdrawer separate. Adding this filter to `rpc.rs:40`
@@ -451,7 +506,12 @@ async fn stake_accounts(
     http: &reqwest::Client,
     url: &str,
     authority: &str,
+    manageable_only: bool,
 ) -> Result<Vec<Value>, BoxErr> {
+    let mut filters = vec![json!({"memcmp": {"offset": 12, "bytes": authority, "encoding": "base58"}})];
+    if manageable_only {
+        filters.push(json!({"memcmp": {"offset": 44, "bytes": authority, "encoding": "base58"}}));
+    }
     let result = rpc(
         http,
         url,
@@ -459,10 +519,7 @@ async fn stake_accounts(
         json!([STAKE_PROGRAM, {
             "encoding": "base64",
             "dataSlice": {"offset": 0, "length": 0},
-            "filters": [
-                {"memcmp": {"offset": 12, "bytes": authority, "encoding": "base58"}},
-                {"memcmp": {"offset": 44, "bytes": authority, "encoding": "base58"}}
-            ]
+            "filters": filters
         }]),
     )
     .await?;
@@ -472,18 +529,24 @@ async fn stake_accounts(
     }
 }
 
-/// How many stake accounts `authority` stakes. Zero across a whole cohort is
-/// what `--verify` treats as a broken derivation.
+/// Whether `authority` owns any stake account at all — the existence check
+/// `--verify` runs. Staker filter only: this asks whether the derivation
+/// produced a real, funded PDA, and a wrong PDA owns nothing either way, so
+/// narrowing to accounts the pool can *manage* would only add ways for a
+/// healthy pool to read as empty. Zero across a whole new cohort is what
+/// `--verify` treats as a broken derivation.
 async fn stake_account_count(
     http: &reqwest::Client,
     url: &str,
     authority: &str,
 ) -> Result<usize, BoxErr> {
-    Ok(stake_accounts(http, url, authority).await?.len())
+    Ok(stake_accounts(http, url, authority, false).await?.len())
 }
 
 /// Live balance behind `authority`, in SOL: the sum of `account.lamports` over
-/// every stake account it stakes.
+/// every stake account the pool can manage — both authorities, since this is
+/// the figure that gates `--min-sol` and stake the pool cannot move must not
+/// count towards it.
 ///
 /// This must measure the same quantity as the non-stale path, which compares
 /// against `StakePool.total_lamports`. Summing `Stake.delegation.stake` at
@@ -499,7 +562,7 @@ async fn stake_account_count(
 /// slice costs nothing and still answers the question.
 async fn live_stake_sol(http: &reqwest::Client, url: &str, authority: &str) -> Result<f64, BoxErr> {
     let mut lamports: u64 = 0;
-    for acc in stake_accounts(http, url, authority).await? {
+    for acc in stake_accounts(http, url, authority, true).await? {
         // A missing `lamports` would otherwise read as a zero balance and
         // silently retire a live pool.
         lamports = lamports.saturating_add(
@@ -584,7 +647,22 @@ fn b64(s: &str) -> Result<Vec<u8>, BoxErr> {
 
 #[cfg(test)]
 mod tests {
-    use super::{b64, endpoint_label, needs_live_recheck};
+    use super::{b64, endpoint_label, needs_live_recheck, verify_cohort};
+    use solana_pools_data_lib::discovery::{assign_names, Candidate, Entry, Registry};
+    use std::cell::RefCell;
+    use std::collections::{HashMap, HashSet};
+    use std::time::Duration;
+
+    fn cand(authority: &str) -> Candidate {
+        Candidate {
+            authority: authority.into(),
+            pool: format!("Pool{authority}"),
+            sanctum_name: Some("Phantom Staked SOL".into()),
+            sanctum_symbol: None,
+            stale: false,
+            verify_empty: false,
+        }
+    }
 
     #[test]
     fn decodes_base64_including_padding_and_rejects_garbage() {
@@ -639,5 +717,78 @@ mod tests {
         );
         // Nothing parseable means nothing recorded — never the raw input.
         assert!(!endpoint_label("not a url?key=secret").contains("secret"));
+    }
+
+    #[tokio::test]
+    async fn verify_annotates_a_quiet_existing_pool_and_withholds_an_empty_new_one() {
+        // The whole point of --verify. `verify_empty` had no producer once
+        // withholding replaced the blanket marking, so `EMPTY_NOTE` was
+        // unreachable from a real run; this drives the loop main actually calls.
+        let counts: HashMap<&str, usize> =
+            [("KnownFull", 4usize), ("NewFull", 7)].into_iter().collect();
+        let asked = RefCell::new(Vec::new());
+        let count = |a: String| {
+            asked.borrow_mut().push(a.clone());
+            std::future::ready(Ok(counts.get(a.as_str()).copied().unwrap_or(0)))
+        };
+
+        let known: HashSet<String> =
+            ["KnownFull".to_string(), "KnownQuiet".to_string()].into_iter().collect();
+        let mut cohort = vec![cand("KnownFull"), cand("KnownQuiet"), cand("NewFull"), cand("NewEmpty")];
+
+        verify_cohort(&mut cohort, &known, "SPoo1", Duration::ZERO, count)
+            .await
+            .unwrap();
+
+        let survivors: Vec<&str> = cohort.iter().map(|c| c.authority.as_str()).collect();
+        assert_eq!(
+            survivors,
+            vec!["KnownFull", "KnownQuiet", "NewFull"],
+            "the empty NEW authority must be withheld, the quiet EXISTING one kept"
+        );
+        let marked: Vec<&str> = cohort
+            .iter()
+            .filter(|c| c.verify_empty)
+            .map(|c| c.authority.as_str())
+            .collect();
+        assert_eq!(marked, vec!["KnownQuiet"], "only the quiet existing entry is marked");
+
+        // Asymmetry of cost: withholding is a decision, so it is re-read at a
+        // later slot; annotating is advisory, so it is not.
+        let asked = asked.into_inner();
+        assert_eq!(asked.iter().filter(|a| *a == "KnownQuiet").count(), 1, "no retry for an existing entry");
+        assert_eq!(asked.iter().filter(|a| *a == "NewEmpty").count(), 2, "a new empty authority is re-read once");
+
+        // ...and the mark reaches the file a human reads.
+        let mut reg = Registry::default();
+        reg.generated.push(Entry {
+            name: "phantom".into(),
+            authority: "KnownQuiet".into(),
+            note: None,
+        });
+        reg.generated.push(Entry { name: "full".into(), authority: "KnownFull".into(), note: None });
+        let out = assign_names(&reg, &cohort);
+        let quiet = out.generated.iter().find(|e| e.authority == "KnownQuiet").unwrap();
+        assert_eq!(quiet.name, "phantom", "a live public name is never withdrawn");
+        assert_eq!(quiet.note.as_deref(), Some("verify: no stake accounts"));
+    }
+
+    #[tokio::test]
+    async fn a_wholly_empty_new_cohort_aborts_the_run() {
+        // One empty authority is a quiet pool; every new one empty is a broken
+        // derivation for that program, and must stop the run before anything is
+        // written. Existing entries do not count towards it — they are only
+        // annotated — or a program whose new pools are all quiet could never
+        // abort behind a registry full of live ones.
+        let count = |_: String| std::future::ready(Ok(0usize));
+        let known: HashSet<String> = ["Known".to_string()].into_iter().collect();
+        let mut cohort = vec![cand("Known"), cand("NewA"), cand("NewB")];
+
+        let err = verify_cohort(&mut cohort, &known, "SPoo1", Duration::ZERO, count)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("ABORT: all 2 new authorities"), "got: {err}");
+        assert!(err.contains("SPoo1"), "the abort must name the program, got: {err}");
     }
 }

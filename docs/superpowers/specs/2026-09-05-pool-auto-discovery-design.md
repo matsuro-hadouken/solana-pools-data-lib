@@ -311,11 +311,18 @@ mis-derived authority, a stale manual entry, or a migrated pool. So emptiness mu
 visible rather than becoming invisible:
 
 - the empty case logs at `warn!` with the pool name and authority;
-- `--verify` on the generator queries each newly-derived authority, moving the check to
-  generation time where a human is present. It must not treat one empty response as proof
-  of a bad authority: a legitimate pool can hold everything in reserve, and RPC returns
-  transient empties. So a zero result is **retried once at a later slot**, and only a
-  result that is still empty counts.
+- `--verify` on the generator queries **every** candidate authority — newly derived and
+  already in the registry alike — moving the check to generation time where a human is
+  present. The query asks only "does this authority own any stake account at all", so it
+  filters on `authorized.staker` alone: a mis-derived PDA owns nothing under any filter,
+  while also requiring `authorized.withdrawer` (which the balance measurement does
+  require, see "Threshold") would make a fork that sets the two differently read as empty
+  and abort a healthy run.
+
+  It must not treat one empty response as proof of a bad authority: a legitimate pool can
+  hold everything in reserve, and RPC returns transient empties. So for a *new* authority
+  a zero result is **retried once at a later slot**, and only a result that is still empty
+  counts.
 
   A still-empty *new* authority is **withheld from the output**, not marked and emitted.
   The two outcomes are not symmetric. Withholding a real pool costs one later run — it is
@@ -325,7 +332,9 @@ visible rather than becoming invisible:
 
   Marking is for entries that **already exist** in the registry and have merely gone quiet.
   Those keep their names — a live API key is never withdrawn — and carry a `verify: no
-  stake accounts` note for a human to look at.
+  stake accounts` note for a human to look at. They get a **single** query, no retry: the
+  note is advisory rather than a decision, and with ~81 registry pools under 10 SOL a
+  retry would only add sleeping to a run that already queries every pool.
 
   Above both sits the signal that actually means the derivation broke, and that check is
   **per program, not global**. A global "all new authorities empty" abort never fires when
