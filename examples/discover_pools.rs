@@ -18,8 +18,47 @@ use std::time::Duration;
 const SANCTUM_LIST: &str =
     "https://raw.githubusercontent.com/igneous-labs/sanctum-lst-list/master/sanctum-lst-list.toml";
 const STAKE_PROGRAM: &str = "Stake11111111111111111111111111111111111111";
+/// Slots are ~400ms, so this is a handful of them — enough that `--verify`'s
+/// second look at an empty authority is a genuinely different read of the chain
+/// rather than the same one repeated.
+const RECHECK_DELAY: Duration = Duration::from_secs(3);
 
 type BoxErr = Box<dyn std::error::Error>;
+/// mint -> (name, optional symbol) from Sanctum's LST list.
+type SanctumNames = HashMap<String, (String, Option<String>)>;
+
+/// Whether a pool's stale cached balance has to be replaced by a live
+/// measurement before it may clear `--min-sol`.
+///
+/// Only BRAND-NEW pools are live-gated, and the asymmetry is deliberate (spec,
+/// "Threshold"): admitting a pool that has quietly drained costs one wrong row a
+/// human can delete, whereas evicting a known pool that simply has not been
+/// cranked retires a live public API name. A known pool therefore keeps its
+/// cached value and carries a soft `stale:` note instead.
+///
+/// The `cached_sol >= min_sol` term means a pool already under the threshold on
+/// its cached figure is retired without a live measurement. That is a separate,
+/// deliberately deferred question, not part of this rule.
+fn needs_live_recheck(stale: bool, cached_sol: f64, min_sol: f64, known: bool) -> bool {
+    stale && cached_sol >= min_sol && !known
+}
+
+/// Scheme and host of `url`, and nothing else.
+///
+/// This string is written into `src/pools.rs` and committed. A Helius or Alchemy
+/// endpoint carries its API key in the path or query string (and userinfo can
+/// carry credentials too), so recording the URL verbatim publishes a secret to
+/// git history the first time anyone runs the generator against a private node.
+fn endpoint_label(url: &str) -> String {
+    match reqwest::Url::parse(url) {
+        Ok(u) => match u.host_str() {
+            Some(host) => format!("{}://{host}", u.scheme()),
+            None => u.scheme().to_string(),
+        },
+        // Unparseable: say nothing rather than risk echoing a credential.
+        Err(_) => "<unparseable endpoint>".to_string(),
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<(), BoxErr> {
@@ -61,7 +100,19 @@ async fn main() -> Result<(), BoxErr> {
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(300))
         .build()?;
-    let epoch = get_epoch(&http, &rpc_url).await?;
+    let (epoch, slot) = get_epoch_and_slot(&http, &rpc_url).await?;
+
+    // The registry has to be read BEFORE any candidate is built, because the
+    // live-stake gate below asks "is this authority already known?" and cannot
+    // answer that from a file it has not loaded yet. Reading it afterwards
+    // applied the strict gate to known and new pools alike, which is how an
+    // 11-epoch-stale pool with 100 SOL cached and 0.5 SOL live got dropped and
+    // then retired — the exact eviction the spec's asymmetry forbids.
+    let existing = std::fs::read_to_string(out_path)?;
+    let mut reg = parse_registry(&existing)?;
+    // promote_derivable only moves entries between sections; it never adds or
+    // removes an authority, so this set is the same before and after it runs.
+    let known: HashSet<String> = reg.all().map(|e| e.authority.clone()).collect();
 
     // 1. Enumerate all three programs. A program returning zero accounts means
     //    the layout or program ID assumption broke, not that pools vanished.
@@ -82,7 +133,7 @@ async fn main() -> Result<(), BoxErr> {
     // 2. Derive authorities. Pre-threshold set is what bootstrap classifies against.
     let mut cohorts: HashMap<&str, Vec<Candidate>> = HashMap::new();
     let mut all_derived: HashSet<String> = HashSet::new();
-    let sanctum = fetch_sanctum(&http).await?;
+    let (sanctum, sanctum_rev) = fetch_sanctum(&http).await?;
 
     for (program, pools) in &by_program {
         let prog = Pubkey::from_str(program)?;
@@ -100,8 +151,7 @@ async fn main() -> Result<(), BoxErr> {
             let stale = epoch.saturating_sub(sp.last_update_epoch) > 10;
             let mut total_sol = sp.total_lamports as f64 / 1e9;
 
-            // A stale cached balance may not admit a NEW entry on its own.
-            if stale && total_sol >= min_sol {
+            if needs_live_recheck(stale, total_sol, min_sol, known.contains(&authority)) {
                 total_sol = live_stake_sol(&http, &rpc_url, &authority).await?;
             }
             if total_sol < min_sol {
@@ -111,7 +161,7 @@ async fn main() -> Result<(), BoxErr> {
             let (name, symbol) = sanctum
                 .get(&sp.mint.to_string())
                 .cloned()
-                .map(|(n, s)| (Some(n), Some(s)))
+                .map(|(n, s)| (Some(n), s))
                 .unwrap_or((None, None));
             cohort.push(Candidate {
                 authority,
@@ -125,11 +175,8 @@ async fn main() -> Result<(), BoxErr> {
         cohorts.insert(program, cohort);
     }
 
-    let existing = std::fs::read_to_string(out_path)?;
-    let mut reg = parse_registry(&existing)?;
     // First run: moves the derivable entries out of MANUAL into GENERATED.
     promote_derivable(&mut reg, &all_derived);
-    let known: HashSet<String> = reg.all().map(|e| e.authority.clone()).collect();
 
     // 3. Verification is per program cohort. A global "all empty" check would
     //    never fire when only one program diverges, and that program's wrong
@@ -142,7 +189,13 @@ async fn main() -> Result<(), BoxErr> {
             for c in cohort.iter().filter(|c| !known.contains(&c.authority)) {
                 fresh += 1;
                 if stake_account_count(&http, &rpc_url, &c.authority).await? == 0 {
-                    empty.insert(c.authority.clone());
+                    // A zero can be a transient RPC answer, or a read at a slot
+                    // where the accounts had not landed yet. The spec requires
+                    // one retry at a later slot before anything is concluded.
+                    tokio::time::sleep(RECHECK_DELAY).await;
+                    if stake_account_count(&http, &rpc_url, &c.authority).await? == 0 {
+                        empty.insert(c.authority.clone());
+                    }
                 }
             }
             if fresh > 0 && empty.len() == fresh {
@@ -154,16 +207,25 @@ async fn main() -> Result<(), BoxErr> {
             }
             // A single empty authority is not proof of a broken derivation — a
             // pool can hold everything in reserve — but it is equally what one
-            // mis-derived authority looks like, and its name freezes the moment
-            // it ships. Counting the cohort alone let that case through
-            // unmarked, so mark it: the note lands in the diff a human reviews.
-            for c in cohort.iter_mut().filter(|c| empty.contains(&c.authority)) {
-                c.verify_empty = true;
-                eprintln!(
-                    "verify: new authority {} (pool {}) has no stake accounts; marked for review",
-                    c.authority, c.pool
-                );
-            }
+            // mis-derived authority looks like, and a NEW authority's name
+            // freezes the moment it ships. The two outcomes are not symmetric:
+            // withholding a real pool costs one later run, freezing a wrong name
+            // costs a public API key forever. So a still-empty NEW authority is
+            // withheld and reported, never emitted. (Withholding applies only
+            // here; an authority already in the registry that goes quiet keeps
+            // its name and is merely annotated.)
+            cohort.retain(|c| {
+                let hold = empty.contains(&c.authority);
+                if hold {
+                    eprintln!(
+                        "verify: WITHHELD new authority {} (pool {}, program {program}): no stake \
+                         accounts at two slots. Re-run once it holds stake, or confirm the \
+                         derivation by hand.",
+                        c.authority, c.pool
+                    );
+                }
+                !hold
+            });
         }
         candidates.extend(cohort);
     }
@@ -190,7 +252,9 @@ async fn main() -> Result<(), BoxErr> {
 
     // 4. Assign names, render, write atomically.
     let provenance = format!(
-        "{rpc_url} epoch {epoch}, --min-sol {min_sol}, {} pools",
+        "{} slot {slot} epoch {epoch}, --min-sol {min_sol}, sanctum-lst-list {}, {} pools",
+        endpoint_label(&rpc_url),
+        sanctum_rev.as_deref().unwrap_or("revision unknown"),
         candidates.len()
     );
     let updated = assign_names(&reg, &candidates);
@@ -302,10 +366,17 @@ async fn rpc(
     Err(format!("{method}: still rate limited after 6 attempts; raise DISCOVER_RPC_DELAY_MS").into())
 }
 
-async fn get_epoch(http: &reqwest::Client, url: &str) -> Result<u64, BoxErr> {
-    rpc(http, url, "getEpochInfo", json!([])).await?["epoch"]
-        .as_u64()
-        .ok_or_else(|| "getEpochInfo: no epoch in result".into())
+/// Epoch and absolute slot, both out of the one `getEpochInfo` round trip the
+/// run already makes. The slot goes into the provenance line: the epoch alone
+/// pins the answer only to within a couple of days.
+async fn get_epoch_and_slot(http: &reqwest::Client, url: &str) -> Result<(u64, u64), BoxErr> {
+    let info = rpc(http, url, "getEpochInfo", json!([])).await?;
+    let field = |k: &str| {
+        info[k]
+            .as_u64()
+            .ok_or_else(|| format!("getEpochInfo: no {k} in result"))
+    };
+    Ok((field("epoch")?, field("absoluteSlot")?))
 }
 
 /// Every StakePool account under `program`. The dataSize filter pins the
@@ -351,12 +422,31 @@ async fn fetch_stake_pools(
     Ok(out)
 }
 
-/// Every stake account whose staker (offset 12) is `authority`, carrying account
-/// metadata only — the zero-length dataSlice transfers no account data, which
-/// keeps a several-thousand-account response small.
+/// Every stake account the pool behind `authority` actually manages, carrying
+/// account metadata only — the zero-length dataSlice transfers no account data,
+/// which keeps a several-thousand-account response small.
+///
+/// BOTH authorities have to match, because that is the test the SPL stake-pool
+/// program itself applies: it only touches a stake account whose
+/// `authorized.staker` AND `authorized.withdrawer` are the pool's withdraw
+/// authority. Filtering on the staker alone counted accounts anyone could
+/// create — name the pool PDA as staker, keep the withdrawer for yourself — so
+/// an unrelated party could hold an abandoned pool above `--min-sol` with stake
+/// the pool cannot move. Layout: state u32 @0, rent_exempt_reserve u64 @4,
+/// authorized.staker @12, authorized.withdrawer @44.
 ///
 /// Both callers share this one request shape on purpose. They used to build
 /// their own, and the pair silently drifted into measuring different things.
+///
+/// The two-authority filter is right *here* and wrong in `src/rpc.rs`. Every
+/// authority that reaches this function was derived from an SPL-family
+/// StakePool account, so the program's own rule applies to all of them. The
+/// library fetches for the whole registry, MANUAL entries included, and those
+/// are not SPL pools: measured on mainnet, `marinade`
+/// (4bZ6o3eUUNXhKuqjdCnCoPAoLgWiuLYixKaxoa8PpiKk) has 145 stake accounts and
+/// 2.29M SOL under the staker filter and **zero** under both, because Marinade
+/// keeps staker and withdrawer separate. Adding this filter to `rpc.rs:40`
+/// would zero out those pools.
 async fn stake_accounts(
     http: &reqwest::Client,
     url: &str,
@@ -369,7 +459,10 @@ async fn stake_accounts(
         json!([STAKE_PROGRAM, {
             "encoding": "base64",
             "dataSlice": {"offset": 0, "length": 0},
-            "filters": [{"memcmp": {"offset": 12, "bytes": authority, "encoding": "base58"}}]
+            "filters": [
+                {"memcmp": {"offset": 12, "bytes": authority, "encoding": "base58"}},
+                {"memcmp": {"offset": 44, "bytes": authority, "encoding": "base58"}}
+            ]
         }]),
     )
     .await?;
@@ -418,30 +511,38 @@ async fn live_stake_sol(http: &reqwest::Client, url: &str, authority: &str) -> R
     Ok(lamports as f64 / 1e9)
 }
 
-/// mint -> (name, symbol) from Sanctum's LST list. This is the only source of
-/// human names; without it every new pool would land as `unnamed_*`, so an
-/// empty parse is an error rather than a silent downgrade.
-async fn fetch_sanctum(http: &reqwest::Client) -> Result<HashMap<String, (String, String)>, BoxErr> {
-    let text = http
-        .get(SANCTUM_LIST)
-        .send()
-        .await?
-        .error_for_status()?
-        .text()
-        .await?;
+/// The Sanctum LST list, plus the revision it was read at (the raw endpoint's
+/// ETag is the git blob SHA, which costs nothing extra to record).
+///
+/// This is the only source of human names; without it every new pool would land
+/// as `unnamed_*`, so an empty parse is an error rather than a silent downgrade.
+///
+/// A record needs `mint` and `name` and nothing else. `symbol` feeds only the
+/// ALIASES lookup, so requiring it discarded records that were perfectly usable
+/// for naming — and if the upstream list ever reshapes partially, the affected
+/// pools would take permanent `unnamed_*` bindings while the non-empty check
+/// above still passed. Require what each use actually needs.
+async fn fetch_sanctum(http: &reqwest::Client) -> Result<(SanctumNames, Option<String>), BoxErr> {
+    let resp = http.get(SANCTUM_LIST).send().await?.error_for_status()?;
+    let revision = resp
+        .headers()
+        .get(reqwest::header::ETAG)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.trim_start_matches("W/").trim_matches('"').to_string());
+    let text = resp.text().await?;
     let doc: toml::Value = text.parse()?;
     let list = doc
         .get("sanctum_lst_list")
         .and_then(|v| v.as_array())
         .ok_or("sanctum-lst-list.toml has no sanctum_lst_list array")?;
-    let map: HashMap<String, (String, String)> = list
+    let map: SanctumNames = list
         .iter()
         .filter_map(|e| {
             Some((
                 e.get("mint")?.as_str()?.to_string(),
                 (
                     e.get("name")?.as_str()?.to_string(),
-                    e.get("symbol")?.as_str()?.to_string(),
+                    e.get("symbol").and_then(|s| s.as_str()).map(String::from),
                 ),
             ))
         })
@@ -450,7 +551,7 @@ async fn fetch_sanctum(http: &reqwest::Client) -> Result<HashMap<String, (String
         return Err("sanctum-lst-list.toml parsed to zero usable entries".into());
     }
     eprintln!("sanctum-lst-list: {} named mints", map.len());
-    Ok(map)
+    Ok((map, revision))
 }
 
 /// Base64 decode. The RPC returns account data base64-encoded and the crate has
@@ -483,7 +584,7 @@ fn b64(s: &str) -> Result<Vec<u8>, BoxErr> {
 
 #[cfg(test)]
 mod tests {
-    use super::b64;
+    use super::{b64, endpoint_label, needs_live_recheck};
 
     #[test]
     fn decodes_base64_including_padding_and_rejects_garbage() {
@@ -491,5 +592,52 @@ mod tests {
         assert_eq!(b64("AQID").unwrap(), vec![1u8, 2, 3]);
         assert_eq!(b64("AQ==").unwrap(), vec![1u8]);
         assert!(b64("!!!!").is_err());
+    }
+
+    #[test]
+    fn a_known_stale_pool_is_not_live_gated_out_of_the_registry() {
+        // The case the strict gate got wrong: --min-sol 1, a pool 11 epochs
+        // stale, 100 SOL cached, 0.5 SOL actually behind its stake accounts.
+        // Live-gate it and it drops out of the candidate list, and assign_names
+        // then moves it to RETIRED — a live public API name evicted for not
+        // having been cranked. Known pools keep the cached figure and a soft
+        // `stale:` note; only brand-new ones are measured live.
+        assert!(
+            !needs_live_recheck(true, 100.0, 1.0, true),
+            "a known stale pool must keep its cached balance, not be re-measured and dropped"
+        );
+        assert!(
+            needs_live_recheck(true, 100.0, 1.0, false),
+            "a brand-new pool may not be admitted on a fossil balance"
+        );
+        // A fresh cached balance is never re-measured, known or not.
+        assert!(!needs_live_recheck(false, 100.0, 1.0, false));
+        // Deferred by decision: a cached balance already under the threshold is
+        // retired without spending an RPC call on it.
+        assert!(!needs_live_recheck(true, 0.5, 1.0, false));
+    }
+
+    #[test]
+    fn the_provenance_endpoint_never_carries_a_credential() {
+        // This string is committed. Helius puts the API key in the query, other
+        // providers put it in the path, and userinfo can carry one too.
+        assert_eq!(
+            endpoint_label("https://mainnet.helius-rpc.com/?api-key=deadbeef-secret"),
+            "https://mainnet.helius-rpc.com"
+        );
+        assert_eq!(
+            endpoint_label("https://solana-mainnet.g.alchemy.com/v2/SECRETKEY"),
+            "https://solana-mainnet.g.alchemy.com"
+        );
+        assert_eq!(
+            endpoint_label("https://user:pass@rpc.example.com:8899/path?k=v#frag"),
+            "https://rpc.example.com"
+        );
+        assert_eq!(
+            endpoint_label("https://api.mainnet-beta.solana.com"),
+            "https://api.mainnet-beta.solana.com"
+        );
+        // Nothing parseable means nothing recorded — never the raw input.
+        assert!(!endpoint_label("not a url?key=secret").contains("secret"));
     }
 }

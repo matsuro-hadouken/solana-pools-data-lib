@@ -204,6 +204,60 @@ fn parse_entry(line: &str) -> Option<Entry> {
     Some(Entry { name, authority, note })
 }
 
+/// The three sections, each delimited by `---- X ----` and `---- END X ----`.
+const SECTIONS: [&str; 3] = ["MANUAL", "GENERATED", "RETIRED"];
+
+/// All six markers must be present, unique, and each closer must follow its own
+/// opener — checked before a single entry is read.
+///
+/// Requiring only the GENERATED opener failed open. Delete the `---- RETIRED
+/// ----` line and the retired entries below it fall outside every section, so
+/// the parser ignores them: their frozen authority->name bindings vanish from
+/// `frozen_names()`. If such a pool comes back on-chain its authority looks
+/// brand new and gets a *different* name, while `replace_region` — which cannot
+/// find the missing opener either — fails safe and leaves the old entry in the
+/// file. Re-parsing the output ignores it again, so the generator's round-trip
+/// guard sees no difference and reports success. The file then holds two names
+/// for one pool, which is exactly the freeze violation every other check here
+/// exists to prevent. A marker that is absent, duplicated or out of order is a
+/// broken file, and a broken file must stop the run, not be parsed around.
+fn check_markers(src: &str) -> Result<(), String> {
+    let lines_with = |marker: &str| -> Vec<usize> {
+        src.lines()
+            .enumerate()
+            .filter(|(_, l)| is_marker_line(l, marker))
+            .map(|(n, _)| n + 1)
+            .collect()
+    };
+    let exactly_one = |marker: &str| -> Result<usize, String> {
+        match lines_with(marker).as_slice() {
+            [n] => Ok(*n),
+            [] => Err(format!(
+                "src/pools.rs: missing section marker `// {marker}`. All six markers \
+                 (`---- X ----` and `---- END X ----` for MANUAL, GENERATED and RETIRED) \
+                 must be present: entries outside a section are silently ignored, which \
+                 loses their frozen authority->name bindings."
+            )),
+            dup => Err(format!(
+                "src/pools.rs: section marker `// {marker}` appears {} times (lines {dup:?}); \
+                 exactly one is required.",
+                dup.len()
+            )),
+        }
+    };
+    for tag in SECTIONS {
+        let open = exactly_one(&format!("---- {tag} ----"))?;
+        let close = exactly_one(&format!("---- END {tag} ----"))?;
+        if close < open {
+            return Err(format!(
+                "src/pools.rs: `// ---- END {tag} ----` (line {close}) comes before \
+                 `// ---- {tag} ----` (line {open}); a closing marker must follow its opener."
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Reads a file the same way `splice` writes one: a line is a section marker
 /// only if it IS a marker, by the one predicate both sides share
 /// (`comment_body`). Matching loosely here — `contains("END GENERATED")` — made
@@ -215,9 +269,7 @@ fn parse_entry(line: &str) -> Option<Entry> {
 /// bindings were gone, so the next run renamed live API keys, and the file
 /// looked correctly generated. Exactness is what keeps the two in step.
 pub fn parse_registry(src: &str) -> Result<Registry, String> {
-    if !src.lines().any(|l| is_marker_line(l, "---- GENERATED ----")) {
-        return Err("no section markers in src/pools.rs; run Task 6 first".into());
-    }
+    check_markers(src)?;
     let mut reg = Registry::default();
     {
         let mut section = None;
@@ -289,12 +341,17 @@ pub struct Candidate {
     pub pool: String,
     pub sanctum_name: Option<String>,
     pub sanctum_symbol: Option<String>,
-    /// The pool's cached balance was stale, so its SOL total was re-measured
-    /// live before it cleared `--min-sol`.
+    /// The pool's cached `total_lamports` is more than 10 epochs behind. A
+    /// brand-new pool in this state had its SOL total re-measured live before it
+    /// cleared `--min-sol`; a pool already in the registry kept its cached value
+    /// and carries the marker only as a soft annotation.
     pub stale: bool,
-    /// `--verify` found no stake accounts behind this newly-derived authority.
-    /// Not a rejection — a pool holding everything in reserve is legitimate —
-    /// but it needs a human's eye before the name freezes.
+    /// `--verify` found no stake accounts behind an authority *already in the
+    /// registry*. Not a rejection — a pool holding everything in reserve is
+    /// legitimate, and a live public API name is never withdrawn — but it needs
+    /// a human's eye. A newly-derived authority that verifies empty is withheld
+    /// from the output instead of marked: withholding is reversible on a later
+    /// run, freezing a wrong name is not.
     pub verify_empty: bool,
 }
 
@@ -302,16 +359,27 @@ pub struct Candidate {
 /// Everything else in a note — `TODO: name`, `verify: from ...`, `verify: no
 /// stake accounts`, a reviewer's hand-written annotation — belongs to whoever
 /// wrote it and is carried across untouched.
-const STALE_NOTE: &str = "stale: balance recomputed live";
-/// Superseded spelling of `STALE_NOTE`, which said the opposite of what the
-/// generator does. Still listed in `MANAGED_NOTES` so a file carrying it gets
-/// cleaned up on the next run instead of accumulating both spellings.
-const STALE_NOTE_LEGACY: &str = "stale: cached balance";
+///
+/// This states the fact — the pool's cached `total_lamports` is more than 10
+/// epochs behind — and says nothing about what the generator did with it,
+/// because that now depends on whether the pool is already in the registry. A
+/// brand-new pool is admitted only on a live re-measurement; a known one keeps
+/// its cached value and carries only this marker, since evicting a live pool
+/// that has merely not been cranked is worse than admitting one that has
+/// drained.
+const STALE_NOTE: &str = "stale: cached balance >10 epochs old";
+/// Superseded spellings of `STALE_NOTE`. Each said something true only of the
+/// generator's behaviour at the time. They stay listed in `MANAGED_NOTES` so a
+/// file carrying one gets cleaned up on the next run instead of accumulating
+/// several spellings side by side.
+const STALE_NOTE_LEGACY: [&str; 2] = ["stale: cached balance", "stale: balance recomputed live"];
 const RETIRED_NOTE: &str = "below threshold or no longer on-chain";
 /// Unmanaged on purpose: it must survive a run made without `--verify` and
 /// stick until a human resolves it.
 const EMPTY_NOTE: &str = "verify: no stake accounts";
-const MANAGED_NOTES: &[&str] = &[STALE_NOTE, STALE_NOTE_LEGACY, RETIRED_NOTE];
+fn is_managed_note(part: &str) -> bool {
+    part == STALE_NOTE || part == RETIRED_NOTE || STALE_NOTE_LEGACY.contains(&part)
+}
 
 /// Rebuild a note as `; `-separated components: everything the previous run
 /// left behind, minus the generator-owned markers, plus the ones that apply now.
@@ -326,7 +394,7 @@ fn merge_note(previous: Option<&str>, add: &[&str]) -> Option<String> {
         .map(|n| {
             n.split(';')
                 .map(str::trim)
-                .filter(|p| !p.is_empty() && !MANAGED_NOTES.contains(p))
+                .filter(|p| !p.is_empty() && !is_managed_note(p))
                 .collect()
         })
         .unwrap_or_default();
@@ -373,8 +441,9 @@ pub fn assign_names(reg: &Registry, candidates: &[Candidate]) -> Registry {
     for c in sorted {
         let mut now: Vec<&str> = Vec::new();
         if c.stale { now.push(STALE_NOTE); }
-        // `--verify` only inspects authorities that are not yet in the
-        // registry, so this never fires on the frozen path below.
+        // Only ever set for an authority that is already in the registry — a
+        // new one that verifies empty never reaches assign_names at all — so
+        // this lands on the frozen path below, next to the name it annotates.
         if c.verify_empty { now.push(EMPTY_NOTE); }
         if let Some(existing) = frozen.get(&c.authority) {
             out.generated.push(Entry {
@@ -637,6 +706,19 @@ mod tests {
         assert_eq!(alias_for("JitoSOL"), None);
     }
 
+    /// `parse_registry` requires all six markers. A fixture that only exercises
+    /// one or two sections gets the missing pairs appended — appended, so the
+    /// line numbers the error-message assertions check stay where they are.
+    fn with_all_sections(src: &str) -> String {
+        let mut out = src.to_string();
+        for tag in SECTIONS {
+            if !src.lines().any(|l| is_marker_line(l, &format!("---- {tag} ----"))) {
+                out.push_str(&format!("// ---- {tag} ----\n// ---- END {tag} ----\n"));
+            }
+        }
+        out
+    }
+
     #[test]
     fn parses_a_markered_file() {
         let src = r#"
@@ -672,7 +754,7 @@ mod tests {
             "        ), // TODO: name\n",
             "// ---- END GENERATED ----\n",
         );
-        let err = parse_registry(src).unwrap_err();
+        let err = parse_registry(&with_all_sections(src)).unwrap_err();
         assert!(err.contains("src/pools.rs:2"), "error must name the line, got: {err}");
         assert!(err.contains("rustfmt"), "error must point at the cause, got: {err}");
     }
@@ -694,7 +776,7 @@ mod tests {
             "        PoolInfo::new(\"gamma\", \"AuthGamma\"),\n",
             "// ---- END GENERATED ----\n",
         );
-        let r = parse_registry(src).unwrap();
+        let r = parse_registry(&with_all_sections(src)).unwrap();
         assert_eq!(
             r.generated.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
             vec!["alpha", "beta", "gamma"]
@@ -716,7 +798,7 @@ mod tests {
             "        PoolInfo::new(\"beta\", \"AuthBeta\"),\n",
             "// ---- END GENERATED ----\n",
         );
-        let r = parse_registry(src).unwrap();
+        let r = parse_registry(&with_all_sections(src)).unwrap();
         assert_eq!(r.manual.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), vec!["alpha"]);
         assert_eq!(r.manual[0].note.as_deref(), Some("verify: from \"---- GENERATED ----\""));
         assert_eq!(r.generated.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), vec!["beta"]);
@@ -734,12 +816,80 @@ mod tests {
             "        PoolInfo::new(\"beta\", \"AuthBeta\"),\n",
             "// ---- END GENERATED ----\n",
         );
-        let r = parse_registry(src).unwrap();
+        let r = parse_registry(&with_all_sections(src)).unwrap();
         assert_eq!(
             r.generated.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
             vec!["alpha", "beta"]
         );
         assert!(r.manual.is_empty());
+    }
+
+    #[test]
+    fn a_missing_section_marker_is_an_error_not_a_silently_ignored_section() {
+        // Delete the RETIRED opener and the entries below it fall outside every
+        // section: the parser drops them, so their frozen authority->name
+        // bindings vanish. A pool that then returns on-chain looks brand new and
+        // is given a DIFFERENT name, while replace_region — which cannot find
+        // the missing opener either — fails safe and leaves the old entry in
+        // place. Re-parsing ignores it again, so the generator's round-trip
+        // guard sees no difference and reports success, and the file ends up
+        // holding two names for one pool. Requiring all six markers stops that.
+        let src = concat!(
+            "// ---- MANUAL ----\n",
+            "// ---- END MANUAL ----\n",
+            "// ---- GENERATED ----\n",
+            "        PoolInfo::new(\"alpha\", \"AuthAlpha\"),\n",
+            "// ---- END GENERATED ----\n",
+            "        PoolInfo::new(\"socean\", \"AuthSocean\"),\n",
+            "// ---- END RETIRED ----\n",
+        );
+        let err = parse_registry(src).unwrap_err();
+        assert!(err.contains("---- RETIRED ----"), "error must name the marker, got: {err}");
+        assert!(err.contains("missing"), "error must name the problem, got: {err}");
+    }
+
+    #[test]
+    fn a_duplicated_section_marker_is_an_error() {
+        // Two openers make "which one does replace_region splice against?" a
+        // coin toss: it takes the first, so every entry under the second sits
+        // outside the spliced region and survives as a stale duplicate.
+        let src = concat!(
+            "// ---- MANUAL ----\n",
+            "// ---- END MANUAL ----\n",
+            "// ---- GENERATED ----\n",
+            "        PoolInfo::new(\"alpha\", \"AuthAlpha\"),\n",
+            "// ---- GENERATED ----\n",
+            "        PoolInfo::new(\"beta\", \"AuthBeta\"),\n",
+            "// ---- END GENERATED ----\n",
+            "// ---- RETIRED ----\n",
+            "// ---- END RETIRED ----\n",
+        );
+        let err = parse_registry(src).unwrap_err();
+        assert!(err.contains("---- GENERATED ----"), "error must name the marker, got: {err}");
+        assert!(err.contains("2 times"), "error must say how many, got: {err}");
+        assert!(err.contains("[3, 5]"), "error must name the lines, got: {err}");
+    }
+
+    #[test]
+    fn a_closing_marker_before_its_opener_is_an_error() {
+        // replace_region already fails safe on this (it searches for the closer
+        // only after the opener) — by returning the input unchanged, which is
+        // indistinguishable from a successful no-op splice. The parser has to be
+        // the one that says so out loud.
+        let src = concat!(
+            "// ---- MANUAL ----\n",
+            "// ---- END MANUAL ----\n",
+            "// ---- END GENERATED ----\n",
+            "        PoolInfo::new(\"alpha\", \"AuthAlpha\"),\n",
+            "// ---- GENERATED ----\n",
+            "// ---- RETIRED ----\n",
+            "// ---- END RETIRED ----\n",
+        );
+        let err = parse_registry(src).unwrap_err();
+        assert!(
+            err.contains("comes before") && err.contains("GENERATED"),
+            "error must name the out-of-order pair, got: {err}"
+        );
     }
 
     #[test]
@@ -762,7 +912,7 @@ mod tests {
             "        PoolInfo::new(\"jito\", \"6iQKfEyhr3bZMotVkW6beNZz5CPAkiwvgV2CTje9pVSS\"),\n",
             "// ---- END GENERATED ----\n",
         );
-        assert_eq!(parse_registry(src).unwrap().generated.len(), 1);
+        assert_eq!(parse_registry(&with_all_sections(src)).unwrap().generated.len(), 1);
     }
 
     #[test]
@@ -800,7 +950,7 @@ mod tests {
             PoolInfo::new("b", "6iQKfEyhr3bZMotVkW6beNZz5CPAkiwvgV2CTje9pVSS"),
             // ---- END GENERATED ----
         "#;
-        let err = parse_registry(src).unwrap_err();
+        let err = parse_registry(&with_all_sections(src)).unwrap_err();
         assert!(err.contains("duplicate authority"), "got: {err}");
     }
 
@@ -943,7 +1093,7 @@ mod tests {
         let fresh_stale = assign_names(&Registry::default(), &[stale.clone()]);
         assert_eq!(
             fresh_stale.generated[0].note.as_deref(),
-            Some("TODO: name; stale: balance recomputed live")
+            Some("TODO: name; stale: cached balance >10 epochs old")
         );
 
         // ...and clear again once the pool stops being stale, rather than
@@ -951,30 +1101,33 @@ mod tests {
         let third = assign_names(&second, &[stale]);
         assert_eq!(
             third.generated[0].note.as_deref(),
-            Some("TODO: name; stale: balance recomputed live")
+            Some("TODO: name; stale: cached balance >10 epochs old")
         );
         let fourth = assign_names(&third, &[cand("A1", "PoolAddr12345", None)]);
         assert_eq!(fourth.generated[0].note.as_deref(), Some("TODO: name"));
     }
 
     #[test]
-    fn the_superseded_stale_note_is_cleaned_up_not_accumulated() {
-        // STALE_NOTE was renamed before release. merge_note filters managed
-        // markers by exact string, so the old spelling has to stay listed or a
-        // file already carrying it would end up with both.
-        let mut reg = Registry::default();
-        reg.generated.push(Entry {
-            name: "phantom".into(),
-            authority: "A1".into(),
-            note: Some("TODO: name; stale: cached balance".into()),
-        });
-        let mut stale = cand("A1", "PoolAddr12345", None);
-        stale.stale = true;
-        let out = assign_names(&reg, &[stale]);
-        assert_eq!(
-            out.generated[0].note.as_deref(),
-            Some("TODO: name; stale: balance recomputed live")
-        );
+    fn the_superseded_stale_notes_are_cleaned_up_not_accumulated() {
+        // STALE_NOTE has been respelled twice. merge_note filters managed markers
+        // by exact string, so every old spelling has to stay listed or a file
+        // already carrying one would end up with both it and the current text.
+        for legacy in STALE_NOTE_LEGACY {
+            let mut reg = Registry::default();
+            reg.generated.push(Entry {
+                name: "phantom".into(),
+                authority: "A1".into(),
+                note: Some(format!("TODO: name; {legacy}")),
+            });
+            let mut stale = cand("A1", "PoolAddr12345", None);
+            stale.stale = true;
+            let out = assign_names(&reg, &[stale]);
+            assert_eq!(
+                out.generated[0].note.as_deref(),
+                Some("TODO: name; stale: cached balance >10 epochs old"),
+                "superseded spelling {legacy:?} must be replaced, not accumulated"
+            );
+        }
     }
 
     #[test]

@@ -314,18 +314,25 @@ visible rather than becoming invisible:
 - `--verify` on the generator queries each newly-derived authority, moving the check to
   generation time where a human is present. It must not treat one empty response as proof
   of a bad authority: a legitimate pool can hold everything in reserve, and RPC returns
-  transient empties. So a zero result is retried at a later slot, and a still-empty pool is
-  **marked, not rejected**. Rejection is reserved for the signal that actually means the
-  derivation broke — but that check is **per program, not global**. A global "all new
-  authorities empty" abort never fires when only one of the three programs diverges: the
-  other two return healthy results, and the diverged program's wrong authorities are merely
-  marked and emitted anyway, producing a factually wrong registry. So each program's cohort
-  is evaluated on its own, and every new authority under a program whose cohort verifies
-  entirely empty is withheld from the output.
+  transient empties. So a zero result is **retried once at a later slot**, and only a
+  result that is still empty counts.
 
-  A marked-empty *new* entry is never admitted while layout assumptions are what is under
-  test; it is reported to stderr for the operator to resolve. Marking is for entries that
-  already exist and have merely gone quiet.
+  A still-empty *new* authority is **withheld from the output**, not marked and emitted.
+  The two outcomes are not symmetric. Withholding a real pool costs one later run — it is
+  admitted as soon as it holds stake. Emitting a mis-derived authority freezes a wrong name
+  onto a public API key permanently. Every withheld pool is reported to stderr by name and
+  authority so the operator can resolve it.
+
+  Marking is for entries that **already exist** in the registry and have merely gone quiet.
+  Those keep their names — a live API key is never withdrawn — and carry a `verify: no
+  stake accounts` note for a human to look at.
+
+  Above both sits the signal that actually means the derivation broke, and that check is
+  **per program, not global**. A global "all new authorities empty" abort never fires when
+  only one of the three programs diverges: the other two return healthy results, and the
+  diverged program's wrong authorities go out with them. So each program's cohort is
+  evaluated on its own, and a program whose entire new cohort verifies empty aborts the
+  run outright.
 
 ### `src/pools.rs` invariants (new tests)
 
@@ -343,7 +350,10 @@ Output is rustfmt-compatible and idempotent: running the generator twice against
 unchanged chain state produces a byte-identical file.
 
 A header comment records the RPC endpoint, slot, epoch, `--min-sol`, and the Sanctum list
-commit, so a surprising diff can be traced to what changed. The counts quoted in this spec
+revision, so a surprising diff can be traced to what changed. The endpoint is recorded as
+**scheme and host only**: this line is committed, and a Helius or Alchemy URL carries its
+API key in the path or query string, so recording it verbatim would publish a credential
+to git history. The counts quoted in this spec
 were measured at epoch 1028 against `api.mainnet-beta.solana.com`.
 
 ## Data Flow
