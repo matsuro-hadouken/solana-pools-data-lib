@@ -23,14 +23,34 @@ type BoxErr = Box<dyn std::error::Error>;
 
 #[tokio::main]
 async fn main() -> Result<(), BoxErr> {
-    let args: Vec<String> = std::env::args().collect();
-    let min_sol: f64 = args
-        .iter()
-        .position(|a| a == "--min-sol")
-        .and_then(|i| args.get(i + 1))
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(1.0);
-    let verify = args.iter().any(|a| a == "--verify");
+    // Every unrecognized or unparseable argument is fatal and names the token.
+    // Ignoring them would let `--verfiy` skip the safety gate in silence, and a
+    // fat-fingered `--min-sol 1o` fall back to the default — on a tool whose
+    // output is permanent public API surface, both deserve a stop.
+    let (mut min_sol, mut verify) = (1.0f64, false);
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--verify" => verify = true,
+            "--min-sol" => {
+                let v = args.next().ok_or("--min-sol needs a value")?;
+                min_sol = v
+                    .parse()
+                    .map_err(|_| format!("--min-sol: {v:?} is not a number"))?;
+                // NaN would make every `total_sol < min_sol` false and admit the
+                // whole chain; a negative threshold does the same.
+                if !min_sol.is_finite() || min_sol < 0.0 {
+                    return Err(format!("--min-sol: {v:?} is not a usable threshold").into());
+                }
+            }
+            other => {
+                return Err(format!(
+                    "unrecognized argument {other:?}; expected `--min-sol <SOL>` and/or `--verify`"
+                )
+                .into())
+            }
+        }
+    }
     let rpc_url = std::env::var("SOLANA_RPC_URL")
         .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
     let out_path = "src/pools.rs";
@@ -302,14 +322,17 @@ async fn fetch_stake_pools(
     Ok(out)
 }
 
-/// Stake accounts whose staker (offset 12) is `authority`, sliced down to
-/// nothing: only the array length is wanted, and a zero-length dataSlice keeps
-/// a several-thousand-account response small.
-async fn stake_account_count(
+/// Every stake account whose staker (offset 12) is `authority`, carrying account
+/// metadata only — the zero-length dataSlice transfers no account data, which
+/// keeps a several-thousand-account response small.
+///
+/// Both callers share this one request shape on purpose. They used to build
+/// their own, and the pair silently drifted into measuring different things.
+async fn stake_accounts(
     http: &reqwest::Client,
     url: &str,
     authority: &str,
-) -> Result<usize, BoxErr> {
+) -> Result<Vec<Value>, BoxErr> {
     let result = rpc(
         http,
         url,
@@ -321,46 +344,47 @@ async fn stake_account_count(
         }]),
     )
     .await?;
-    Ok(result
-        .as_array()
-        .ok_or("getProgramAccounts(stake): result is not an array")?
-        .len())
+    match result {
+        Value::Array(v) => Ok(v),
+        _ => Err("getProgramAccounts(stake): result is not an array".into()),
+    }
 }
 
-/// Live delegated stake behind `authority`, in SOL. Offset 156 is
-/// `Stake.delegation.stake`; the slice is 8 bytes so the response stays small
-/// even for a pool with thousands of delegations.
-///
-/// This is delegated stake only — it excludes the pool's reserve account, which
-/// `StakePool.total_lamports` includes. That is the point: it exists to re-check
-/// a pool whose cached total is more than ten epochs old.
-async fn live_stake_sol(http: &reqwest::Client, url: &str, authority: &str) -> Result<f64, BoxErr> {
-    let result = rpc(
-        http,
-        url,
-        "getProgramAccounts",
-        json!([STAKE_PROGRAM, {
-            "encoding": "base64",
-            "dataSlice": {"offset": 156, "length": 8},
-            "filters": [{"memcmp": {"offset": 12, "bytes": authority, "encoding": "base58"}}]
-        }]),
-    )
-    .await?;
+/// How many stake accounts `authority` stakes. Zero across a whole cohort is
+/// what `--verify` treats as a broken derivation.
+async fn stake_account_count(
+    http: &reqwest::Client,
+    url: &str,
+    authority: &str,
+) -> Result<usize, BoxErr> {
+    Ok(stake_accounts(http, url, authority).await?.len())
+}
 
+/// Live balance behind `authority`, in SOL: the sum of `account.lamports` over
+/// every stake account it stakes.
+///
+/// This must measure the same quantity as the non-stale path, which compares
+/// against `StakePool.total_lamports`. Summing `Stake.delegation.stake` at
+/// offset 156 does not: it counts delegated stake only, so it misses the
+/// reserve account, transient stake and anything undelegated — and it reads
+/// zero for the reserve, which is a stake account in the Initialized state with
+/// no delegation at all. A pool holding everything in reserve is legitimate —
+/// the case Task 7 exists to support — so judging a stale pool that way applies
+/// a stricter rule than a fresh one gets, and drops pools that belong in the
+/// registry. It dropped 26 of them before this was corrected.
+///
+/// `lamports` lives in the account metadata, not in `data`, so the zero-length
+/// slice costs nothing and still answers the question.
+async fn live_stake_sol(http: &reqwest::Client, url: &str, authority: &str) -> Result<f64, BoxErr> {
     let mut lamports: u64 = 0;
-    for acc in result
-        .as_array()
-        .ok_or("getProgramAccounts(stake): result is not an array")?
-    {
-        let encoded = acc["account"]["data"][0]
-            .as_str()
-            .ok_or("stake account without base64 data")?;
-        let bytes = b64(encoded)?;
-        let slice: [u8; 8] = bytes
-            .as_slice()
-            .try_into()
-            .map_err(|_| format!("stake dataSlice returned {} bytes, expected 8", bytes.len()))?;
-        lamports = lamports.saturating_add(u64::from_le_bytes(slice));
+    for acc in stake_accounts(http, url, authority).await? {
+        // A missing `lamports` would otherwise read as a zero balance and
+        // silently retire a live pool.
+        lamports = lamports.saturating_add(
+            acc["account"]["lamports"]
+                .as_u64()
+                .ok_or("stake account without lamports")?,
+        );
     }
     Ok(lamports as f64 / 1e9)
 }
