@@ -1,5 +1,8 @@
 //! Offline pool discovery. Compiled only with the `discover` feature.
 
+use std::collections::HashMap;
+use std::collections::HashSet;
+
 use solana_pubkey::Pubkey;
 
 pub const SPL_STAKE_POOL: &str = "SPoo1Ku8WFXoNDMHPsrGSTSG1Y47rzgn41SLUNakuHy";
@@ -164,6 +167,86 @@ pub fn slugify(sanctum_name: &str) -> Slug {
     Slug::Clean(slug)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Entry {
+    pub name: String,
+    pub authority: String,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct Registry {
+    pub manual: Vec<Entry>,
+    pub generated: Vec<Entry>,
+    pub retired: Vec<Entry>,
+}
+
+impl Registry {
+    pub fn all(&self) -> impl Iterator<Item = &Entry> {
+        self.manual.iter().chain(&self.generated).chain(&self.retired)
+    }
+    /// Authority -> name, the binding the freeze rule protects.
+    pub fn frozen_names(&self) -> HashMap<String, String> {
+        self.all().map(|e| (e.authority.clone(), e.name.clone())).collect()
+    }
+}
+
+fn parse_entry(line: &str) -> Option<Entry> {
+    let rest = line.trim().strip_prefix("PoolInfo::new(")?;
+    let mut parts = rest.split('"').skip(1).step_by(2);
+    let name = parts.next()?.to_string();
+    let authority = parts.next()?.to_string();
+    Some(Entry { name, authority, note: None })
+}
+
+pub fn parse_registry(src: &str) -> Result<Registry, String> {
+    if !src.contains("---- GENERATED") {
+        return Err("no section markers in src/pools.rs; run Task 6 first".into());
+    }
+    let mut reg = Registry::default();
+    {
+        let mut section = None;
+        for line in src.lines() {
+            let t = line.trim();
+            if t.contains("---- MANUAL") && !t.contains("END") { section = Some(0); continue; }
+            if t.contains("---- GENERATED") && !t.contains("END") { section = Some(1); continue; }
+            if t.contains("---- RETIRED") && !t.contains("END") { section = Some(2); continue; }
+            if t.contains("END MANUAL") || t.contains("END GENERATED") || t.contains("END RETIRED") {
+                section = None;
+                continue;
+            }
+            if let (Some(s), Some(e)) = (section, parse_entry(t)) {
+                match s {
+                    0 => reg.manual.push(e),
+                    1 => reg.generated.push(e),
+                    _ => reg.retired.push(e),
+                }
+            }
+        }
+    }
+
+    let mut seen = HashSet::new();
+    for e in reg.all() {
+        if !seen.insert(e.authority.clone()) {
+            return Err(format!("duplicate authority {} (name {})", e.authority, e.name));
+        }
+    }
+    Ok(reg)
+}
+
+/// Move MANUAL entries whose authority is derivable into GENERATED. On the
+/// first run this performs the 33/28 split; afterwards it promotes any
+/// hand-added pool that turns out to be an SPL-family pool.
+pub fn promote_derivable(reg: &mut Registry, derived: &HashSet<String>) {
+    let (promote, keep): (Vec<_>, Vec<_>) =
+        reg.manual.drain(..).partition(|e| derived.contains(&e.authority));
+    if !promote.is_empty() {
+        eprintln!("promoting {} manual entries to generated", promote.len());
+    }
+    reg.manual = keep;
+    reg.generated.extend(promote);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,5 +361,63 @@ mod tests {
         assert_eq!(alias_for("GTSOL"), Some("gate_io"));
         assert_eq!(alias_for("dfdvSOL"), Some("defidevcorp"));
         assert_eq!(alias_for("JitoSOL"), None);
+    }
+
+    #[test]
+    fn parses_a_markered_file() {
+        let src = r#"
+            // ---- MANUAL ----
+            PoolInfo::new("kraken", "36kaqVpcbSSJ55rP48uGQWtQs3eNaa6SbX8qbhPxHGJf"),
+            // ---- END MANUAL ----
+            // ---- GENERATED ----
+            PoolInfo::new("jito", "6iQKfEyhr3bZMotVkW6beNZz5CPAkiwvgV2CTje9pVSS"),
+            // ---- END GENERATED ----
+            // ---- RETIRED ----
+            PoolInfo::new("socean", "AzZRvyyMHBm8EHEksWxq4ozFL7JxLMydCDMGhqM6BVck"),
+            // ---- END RETIRED ----
+        "#;
+        let r = parse_registry(src).unwrap();
+        assert_eq!(r.manual.len(), 1);
+        assert_eq!(r.generated[0].name, "jito");
+        assert_eq!(r.retired[0].name, "socean");
+    }
+
+    #[test]
+    fn promotes_derivable_manual_entries() {
+        // First run: Task 6 parked all 61 existing entries in MANUAL. The 28 whose
+        // authorities are derivable belong in GENERATED.
+        let src = r#"
+            // ---- MANUAL ----
+            PoolInfo::new("jito", "6iQKfEyhr3bZMotVkW6beNZz5CPAkiwvgV2CTje9pVSS"),
+            PoolInfo::new("kraken", "36kaqVpcbSSJ55rP48uGQWtQs3eNaa6SbX8qbhPxHGJf"),
+            // ---- END MANUAL ----
+            // ---- GENERATED ----
+            // ---- END GENERATED ----
+            // ---- RETIRED ----
+            // ---- END RETIRED ----
+        "#;
+        let mut derived = HashSet::new();
+        derived.insert("6iQKfEyhr3bZMotVkW6beNZz5CPAkiwvgV2CTje9pVSS".to_string());
+
+        let mut r = parse_registry(src).unwrap();
+        promote_derivable(&mut r, &derived);
+        assert_eq!(r.generated.iter().map(|e| &e.name).collect::<Vec<_>>(), vec!["jito"]);
+        assert_eq!(r.manual.iter().map(|e| &e.name).collect::<Vec<_>>(), vec!["kraken"]);
+    }
+
+    #[test]
+    fn rejects_duplicate_authority_across_sections() {
+        // POOLS_BY_AUTHORITY is built with collect(), so a duplicate would silently
+        // overwrite and misattribute every stake account fetched for it.
+        let src = r#"
+            // ---- MANUAL ----
+            PoolInfo::new("a", "6iQKfEyhr3bZMotVkW6beNZz5CPAkiwvgV2CTje9pVSS"),
+            // ---- END MANUAL ----
+            // ---- GENERATED ----
+            PoolInfo::new("b", "6iQKfEyhr3bZMotVkW6beNZz5CPAkiwvgV2CTje9pVSS"),
+            // ---- END GENERATED ----
+        "#;
+        let err = parse_registry(src).unwrap_err();
+        assert!(err.contains("duplicate authority"), "got: {err}");
     }
 }
