@@ -192,11 +192,16 @@ impl Registry {
 }
 
 fn parse_entry(line: &str) -> Option<Entry> {
-    let rest = line.trim().strip_prefix("PoolInfo::new(")?;
+    let trimmed = line.trim();
+    let rest = trimmed.strip_prefix("PoolInfo::new(")?;
     let mut parts = rest.split('"').skip(1).step_by(2);
     let name = parts.next()?.to_string();
     let authority = parts.next()?.to_string();
-    Some(Entry { name, authority, note: None })
+    // A trailing `// comment` is hand-maintained context (e.g. "exchange,
+    // verified 2026-01"). It must survive a parse-then-splice round trip or
+    // the generator silently deletes it on the next run.
+    let note = trimmed.find("//").map(|i| trimmed[i + 2..].trim().to_string());
+    Some(Entry { name, authority, note })
 }
 
 pub fn parse_registry(src: &str) -> Result<Registry, String> {
@@ -245,6 +250,126 @@ pub fn promote_derivable(reg: &mut Registry, derived: &HashSet<String>) {
     }
     reg.manual = keep;
     reg.generated.extend(promote);
+}
+
+#[derive(Debug, Clone)]
+pub struct Candidate {
+    pub authority: String,
+    pub pool: String,
+    pub mint: String,
+    pub sanctum_name: Option<String>,
+    pub sanctum_symbol: Option<String>,
+    pub total_sol: f64,
+    pub stale: bool,
+}
+
+pub fn assign_names(reg: &Registry, candidates: &[Candidate]) -> Registry {
+    let frozen = reg.frozen_names();
+    let mut taken: HashSet<String> = reg.all().map(|e| e.name.clone()).collect();
+
+    // Deterministic: sort by authority before handing out any suffix.
+    let mut sorted = candidates.to_vec();
+    sorted.sort_by(|a, b| a.authority.cmp(&b.authority));
+
+    let mut out = reg.clone();
+    out.generated.clear();
+
+    // A previously-generated pool that is no longer a candidate has dropped
+    // below the threshold or left the chain. It is retired, never deleted:
+    // deleting it would remove a live API key.
+    let present: HashSet<&str> = sorted.iter().map(|c| c.authority.as_str()).collect();
+    for e in reg.generated.iter().filter(|e| !present.contains(e.authority.as_str())) {
+        out.retired.push(Entry {
+            name: e.name.clone(),
+            authority: e.authority.clone(),
+            note: Some("below threshold or no longer on-chain".into()),
+        });
+    }
+
+    for c in sorted {
+        if let Some(existing) = frozen.get(&c.authority) {
+            let mut e = Entry { name: existing.clone(), authority: c.authority.clone(), note: None };
+            if c.stale {
+                e.note = Some("stale: cached balance".into());
+            }
+            out.generated.push(e);
+            continue;
+        }
+
+        let mut note = None;
+        let base = c
+            .sanctum_symbol
+            .as_deref()
+            .and_then(alias_for)
+            .map(String::from)
+            .or_else(|| match c.sanctum_name.as_deref().map(slugify) {
+                Some(Slug::Clean(s)) => Some(s),
+                Some(Slug::Suspicious { slug, original }) => {
+                    note = Some(format!("verify: from {original:?}"));
+                    Some(slug)
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| {
+                note = Some("TODO: name".into());
+                format!("unnamed_{}", &c.pool[..c.pool.len().min(8)])
+            });
+
+        let mut name = base.clone();
+        let mut n = 2;
+        while taken.contains(&name) {
+            name = format!("{base}_{n}");
+            n += 1;
+        }
+        taken.insert(name.clone());
+        out.generated.push(Entry { name, authority: c.authority.clone(), note });
+    }
+    out
+}
+
+fn body(entries: &[Entry]) -> String {
+    let mut sorted = entries.to_vec();
+    sorted.sort_by(|a, b| a.authority.cmp(&b.authority));
+    sorted
+        .iter()
+        .map(|e| {
+            format!(
+                "        PoolInfo::new(\"{}\", \"{}\"),{}\n",
+                e.name,
+                e.authority,
+                e.note.as_ref().map(|n| format!(" // {n}")).unwrap_or_default()
+            )
+        })
+        .collect()
+}
+
+/// Replace the text between each `---- X ----` / `---- END X ----` pair,
+/// leaving every byte outside the markers untouched. The accessors, the
+/// HashMap indexes and the test module all live outside them.
+fn replace_region(src: &str, tag: &str, new_body: &str) -> String {
+    let open = format!("---- {tag}");
+    let close = format!("---- END {tag}");
+    let (Some(o), Some(c)) = (src.find(&open), src.find(&close)) else { return src.to_string() };
+    let body_start = src[o..].find('\n').map(|i| o + i + 1).unwrap_or(o);
+    let line_start = src[..c].rfind('\n').map(|i| i + 1).unwrap_or(c);
+    format!("{}{}{}", &src[..body_start], new_body, &src[line_start..])
+}
+
+pub fn splice(existing: &str, reg: &Registry, provenance: &str) -> String {
+    let mut out = replace_region(existing, "MANUAL", &body(&reg.manual));
+    out = replace_region(&out, "GENERATED", &body(&reg.generated));
+    out = replace_region(&out, "RETIRED", &body(&reg.retired));
+
+    // Provenance lives on one comment line that is rewritten in place.
+    let stamp = format!("//! Provenance: {provenance}");
+    match out.lines().position(|l| l.starts_with("//! Provenance:")) {
+        Some(i) => {
+            let mut lines: Vec<&str> = out.lines().collect();
+            lines[i] = &stamp;
+            lines.join("\n") + "\n"
+        }
+        None => format!("{stamp}\n{out}"),
+    }
 }
 
 #[cfg(test)]
@@ -419,5 +544,159 @@ mod tests {
         "#;
         let err = parse_registry(src).unwrap_err();
         assert!(err.contains("duplicate authority"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_entry_captures_trailing_comment_and_splice_round_trips_it() {
+        // A hand-written comment on a MANUAL entry must survive a
+        // parse-then-splice round trip, or the generator silently deletes
+        // human-maintained notes the first time it runs.
+        let e = parse_entry(
+            r#"PoolInfo::new("kraken", "36kaqVpcbSSJ55rP48uGQWtQs3eNaa6SbX8qbhPxHGJf"), // exchange, verified 2026-01"#,
+        )
+        .unwrap();
+        assert_eq!(e.name, "kraken");
+        assert_eq!(e.note.as_deref(), Some("exchange, verified 2026-01"));
+
+        let no_comment = parse_entry(
+            r#"PoolInfo::new("jito", "6iQKfEyhr3bZMotVkW6beNZz5CPAkiwvgV2CTje9pVSS"),"#,
+        )
+        .unwrap();
+        assert_eq!(no_comment.note, None);
+
+        let mut reg = Registry::default();
+        reg.manual.push(e);
+        let existing = "// ---- MANUAL ----\n// ---- END MANUAL ----\n";
+        let out = splice(existing, &reg, "epoch 1028");
+        assert!(
+            out.contains("// exchange, verified 2026-01"),
+            "manual comment must survive splice, got: {out}"
+        );
+    }
+
+    fn cand(auth: &str, pool: &str, name: Option<&str>) -> Candidate {
+        Candidate {
+            authority: auth.into(),
+            pool: pool.into(),
+            mint: "MintMintMintMintMintMintMintMintMintMintMin".into(),
+            sanctum_name: name.map(String::from),
+            sanctum_symbol: None,
+            total_sol: 100.0,
+            stale: false,
+        }
+    }
+
+    #[test]
+    fn existing_names_are_frozen_even_when_onchain_disagrees() {
+        // forward_industries' pool is "Dum Staked SOL" on-chain. Renaming it would
+        // break every consumer keyed on the old name.
+        let mut reg = Registry::default();
+        reg.generated.push(Entry {
+            name: "forward_industries".into(),
+            authority: "3ndMuPC9Cz5VC4RJkpoPaZz6Px6eVXtRenw9Yi1o2xnA".into(),
+            note: None,
+        });
+        let out = assign_names(
+            &reg,
+            &[cand("3ndMuPC9Cz5VC4RJkpoPaZz6Px6eVXtRenw9Yi1o2xnA", "PoolA", Some("Dum Staked SOL"))],
+        );
+        assert_eq!(out.generated[0].name, "forward_industries");
+    }
+
+    #[test]
+    fn new_pools_get_slugged_names() {
+        let out = assign_names(
+            &Registry::default(),
+            &[cand("AuthA", "PoolA", Some("Phantom Staked SOL"))],
+        );
+        assert_eq!(out.generated[0].name, "phantom");
+    }
+
+    #[test]
+    fn unnamed_pools_fall_back_to_pool_prefix() {
+        let out = assign_names(&Registry::default(), &[cand("AuthA", "PoolAddr12345", None)]);
+        assert_eq!(out.generated[0].name, "unnamed_PoolAddr");
+    }
+
+    #[test]
+    fn pools_that_drop_out_are_retired_not_deleted() {
+        // Global constraint: a name, once emitted, is never deleted. A pool that
+        // falls below --min-sol or leaves the chain moves to RETIRED, where
+        // get_pool_by_name() still resolves it.
+        let mut reg = Registry::default();
+        reg.generated.push(Entry { name: "gone".into(), authority: "GoneAuth".into(), note: None });
+        reg.generated.push(Entry { name: "stays".into(), authority: "StaysAuth".into(), note: None });
+
+        let out = assign_names(&reg, &[cand("StaysAuth", "PoolS", Some("Jito Staked SOL"))]);
+
+        assert_eq!(out.generated.len(), 1);
+        assert_eq!(out.generated[0].name, "stays");
+        assert_eq!(out.retired.len(), 1);
+        assert_eq!(out.retired[0].name, "gone", "dropped pool must be retired, never deleted");
+        assert!(out.retired[0].note.as_deref().unwrap().contains("below threshold"));
+    }
+
+    #[test]
+    fn retired_pools_keep_their_names_reserved() {
+        // A retired name must stay taken, or a new pool could claim it and two
+        // different authorities would answer to the same API key over time.
+        let mut reg = Registry::default();
+        reg.retired.push(Entry { name: "phantom".into(), authority: "OldAuth".into(), note: None });
+
+        let out = assign_names(&reg, &[cand("NewAuth", "PoolN", Some("Phantom Staked SOL"))]);
+        assert_eq!(out.generated[0].name, "phantom_2");
+    }
+
+    #[test]
+    fn collisions_suffix_deterministically_by_authority() {
+        // Suffix order must not depend on input order, or _2/_3 could swap between
+        // runs and break the freeze invariant for the pools it exists to protect.
+        let a = cand("Bbb", "Pool1", Some("Sanctum Staked SOL"));
+        let b = cand("Aaa", "Pool2", Some("Sanctum Staked SOL"));
+
+        let fwd = assign_names(&Registry::default(), &[a.clone(), b.clone()]);
+        let rev = assign_names(&Registry::default(), &[b, a]);
+
+        let names = |r: &Registry| {
+            let mut v: Vec<_> = r.generated.iter().map(|e| (e.authority.clone(), e.name.clone())).collect();
+            v.sort();
+            v
+        };
+        assert_eq!(names(&fwd), names(&rev));
+        assert_eq!(names(&fwd), vec![
+            ("Aaa".to_string(), "sanctum".to_string()),
+            ("Bbb".to_string(), "sanctum_2".to_string()),
+        ]);
+    }
+
+    #[test]
+    fn splice_is_deterministic_and_sorted() {
+        let mut reg = Registry::default();
+        reg.generated.push(Entry { name: "b".into(), authority: "Zzz".into(), note: None });
+        reg.generated.push(Entry { name: "a".into(), authority: "Aaa".into(), note: None });
+        let existing = "// ---- GENERATED ----\n// ---- END GENERATED ----\n";
+        let out = splice(existing, &reg, "epoch 1028");
+        assert_eq!(out, splice(existing, &reg, "epoch 1028"));
+        assert!(out.find("Aaa").unwrap() < out.find("Zzz").unwrap(), "sorted by authority");
+    }
+
+    #[test]
+    fn splice_preserves_everything_outside_the_markers() {
+        // The accessors, the HashMap indexes and the existing test module all live
+        // outside the markers. Rewriting the whole file would delete them.
+        let existing = concat!(
+            "pub fn get_pool_by_name(n: &str) -> Option<&PoolInfo> { todo!() }\n",
+            "// ---- GENERATED ----\n",
+            "        PoolInfo::new(\"old\", \"OldAuth\"),\n",
+            "// ---- END GENERATED ----\n",
+            "#[cfg(test)] mod tests { }\n",
+        );
+        let mut reg = Registry::default();
+        reg.generated.push(Entry { name: "new".into(), authority: "NewAuth".into(), note: None });
+
+        let out = splice(existing, &reg, "epoch 1028");
+        assert!(out.contains("get_pool_by_name"), "accessors must survive");
+        assert!(out.contains("#[cfg(test)] mod tests"), "tests must survive");
+        assert!(out.contains("NewAuth") && !out.contains("OldAuth"), "body replaced");
     }
 }
