@@ -1,11 +1,11 @@
 
 # Pools Data Library
 
-Rust library for fetching Solana stake pools data. Supports production and debug formats, RPC configuration, and 31 pools.
+Rust library for fetching Solana stake pools data. Supports production and debug formats, RPC configuration, and 294 pools.
 
 ## Features
 - Pool, validator, and account statistics calculated in-library
-- 31 supported pools (Jito, Marinade, Lido, etc.)
+- 294 supported pools (Jito, Marinade, Lido, etc.), auto-discovered on chain
 - Rate limiting, retries, timeouts, provider presets
 
 ## Data Returned
@@ -86,7 +86,12 @@ Manual tuning:
 `.rate_limit(n)` | `.timeout(secs)` | `.retry_attempts(n)` | `.max_concurrent_requests(n)`
 
 ## Supported Pools
-31 Solana stake pools. List: `PoolsDataClient::list_available_pools()`
+294 Solana stake pools: auto-discovered SPL-family stake pools plus a hand-maintained
+list of custodial and non-SPL stakers. Regenerate with:
+
+`cargo run --features discover --example discover_pools -- --min-sol 1`
+
+List: `PoolsDataClient::list_available_pools()`
 
 ## Error Handling
 All API methods return `Result`. Partial failures available in debug format.
