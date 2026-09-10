@@ -49,6 +49,18 @@ mod tests {
         assert_eq!(stats.deactivated_stake_lamports, 0); // No deactivated stake without epoch
         assert_eq!(stats.validator_count, 2);
     }
+
+    #[test]
+    fn empty_stake_accounts_produce_empty_statistics_not_an_error() {
+        // 81 of the 261 discovered pools hold under 10 SOL and routinely have zero
+        // stake accounts (everything sits in reserve). That is a healthy pool, not
+        // a failure — but it must stay visible, because an empty result is also
+        // what a mis-derived authority looks like.
+        let stats = PoolsDataClient::calculate_pool_statistics(&[]);
+        assert_eq!(stats.total_accounts, 0);
+        assert_eq!(stats.total_lamports, 0);
+        assert_eq!(stats.validator_count, 0);
+    }
 }
 /// Client for fetching pools data.
 use std::collections::HashMap;
@@ -59,7 +71,7 @@ use tokio_retry::{strategy::ExponentialBackoff, Retry};
 
 use crate::config::{ClientConfig, PoolsDataClientBuilder};
 use crate::error::{PoolError, PoolsDataError, Result};
-use crate::pools::{get_all_pools, get_pools_by_names, PoolInfo};
+use crate::pools::{get_active_pools, get_all_pools, get_pools_by_names, PoolInfo};
 use crate::rpc::RpcClient;
 use crate::types::{
     FieldAnalysis, PoolData, PoolStatistics, PoolsDataResult, ProductionPoolData, StakeAccountInfo,
@@ -88,7 +100,7 @@ impl PoolsDataClient {
                 message: format!("Invalid current_epoch passed to fetch_all_pools_with_stats: {current_epoch}"),
             });
         }
-        let all_pools = crate::pools::get_all_pools();
+        let all_pools = get_active_pools();
         let pool_names: Vec<&str> = all_pools.iter().map(|p| p.name.as_str()).collect();
         let pools = self.fetch_pools(&pool_names).await?;
         let mut result = std::collections::HashMap::new();
@@ -174,7 +186,7 @@ impl PoolsDataClient {
     ///
     /// Returns error if any pool fails to fetch or if network issues occur.
     pub async fn fetch_all_pools(&self) -> Result<HashMap<String, ProductionPoolData>> {
-        let all_pools = get_all_pools();
+        let all_pools = get_active_pools();
         let pool_names: Vec<&str> = all_pools.iter().map(|p| p.name.as_str()).collect();
         self.fetch_pools(&pool_names).await
     }
@@ -315,14 +327,13 @@ impl PoolsDataClient {
         match result {
             Ok(stake_accounts) => {
                 if stake_accounts.is_empty() {
-                    return Err(PoolError::new(
-                        pool_name,
-                        authority,
-                        PoolsDataError::NoStakeAccounts { 
-                            pool_name: pool_info.name.clone() 
-                        },
-                        0,
-                    ));
+                    // Legitimate for reserve-only pools, but also what a bad
+                    // authority looks like. Never silent.
+                    log::warn!(
+                        "pool {} ({}) returned no stake accounts",
+                        pool_info.name,
+                        pool_info.authority
+                    );
                 }
 
                 let validator_distribution =
