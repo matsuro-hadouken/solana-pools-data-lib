@@ -151,6 +151,6 @@ mod tests {
         let failures = (0u8..=252)
             .filter(|b| derive_authority(&pool, *b, &prog).is_err())
             .count();
-        assert!(failures > 0, "wrong bumps must be rejected, not returned");
+        assert_eq!(failures, 118, "on-curve rejection rate changed; the off-curve check may be disabled");
     }
 }
