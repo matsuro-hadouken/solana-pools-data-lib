@@ -38,6 +38,9 @@ mod types;
 pub mod statistics;
 pub mod statistics_calc;
 
+#[cfg(feature = "discover")]
+pub mod discovery;
+
 #[cfg(test)]
 mod statistics_calc_tests;
 
