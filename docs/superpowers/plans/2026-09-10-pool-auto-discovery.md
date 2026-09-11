@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Library MSRV is `rust-version = "1.75"` (`Cargo.toml:13`). No change. Generator-only deps are optional and feature-gated; only a maintainer running the generator needs 1.81+.
+- Library MSRV is `rust-version = "1.82"` (`Cargo.toml:13`), established by compiling rather than by reading declared MSRVs. Generator-only deps are optional and feature-gated; a maintainer running the generator needs **1.89+**. (During execution this read 1.75, which was already inaccurate before the branch began — see the spec's MSRV section.)
 - No new **default** dependencies. `solana-pubkey` and `toml` are `optional = true`, activated only by the `discover` feature.
 - **Pool names are API keys.** A name, once emitted, is never changed or deleted by the generator. Identity is the authority pubkey.
 - Generator output is deterministic: sorted by authority pubkey, rustfmt-clean, byte-identical across runs against unchanged chain state.
@@ -85,7 +85,7 @@ pub mod discovery;
 echo '//! Offline pool discovery. Compiled only with the `discover` feature.' > src/discovery.rs
 ```
 
-- [ ] **Step 4: Verify the 1.75 promise is intact and the feature builds**
+- [ ] **Step 4: Verify the MSRV floor is intact and the feature builds**
 
 ```bash
 cargo build                      # default features: solana-pubkey must NOT appear

@@ -10,7 +10,10 @@ documentation = "https://docs.rs/solana-pools-data-lib"
 keywords = ["solana", "blockchain", "stake-pools", "rpc", "defi"]
 categories = ["api-bindings", "cryptocurrency", "asynchronous"]
 readme = "README.md"
-rust-version = "1.75"
+# Verified by compilation, not by reading declared MSRVs: 1.81 fails on the
+# icu_* crates (reqwest -> url -> idna), 1.82 builds clean. The `discover`
+# feature needs 1.89+ (solana-address/solana-hash), which is why it is optional.
+rust-version = "1.82"
 exclude = ["/target", "/.git", "/.github"]
 
 [features]
