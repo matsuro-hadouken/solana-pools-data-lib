@@ -2,3 +2,7 @@
 /.vscode
 /tmp
 /examples/research_account_states.rs
+# A/B snapshot artifacts — local only, never committed (285MB+ each)
+/snapshot-*.json
+/snapshot.json
+/legacy61.txt

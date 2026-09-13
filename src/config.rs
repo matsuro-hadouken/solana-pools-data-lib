@@ -517,4 +517,47 @@ mod tests {
         );
         assert_eq!(config.retry_attempts, PrivateRpcConfig::RETRY_ATTEMPTS);
     }
+
+    /// The registry grew 61 -> 294 pools and `fetch_all_pools` issues one
+    /// getProgramAccounts per pool, so a loosened public preset multiplies load
+    /// on exactly the endpoint least able to absorb it. Pin the conservatism.
+    #[test]
+    fn public_preset_stays_conservative() {
+        assert_eq!(PublicRpcConfig::RATE_LIMIT_PER_SECOND, 1);
+        assert_eq!(PublicRpcConfig::MAX_CONCURRENT_REQUESTS, 1);
+        assert!(
+            PublicRpcConfig::RETRY_BASE_DELAY_MS >= 1000,
+            "public retries must back off by at least a second"
+        );
+    }
+
+    /// Worst-case request count for a full refresh is bounded and knowable:
+    /// pools * (1 + retry_attempts). At 294 pools this is the number to size an
+    /// RPC plan against, so keep the retry budget from drifting upward.
+    #[test]
+    fn worst_case_request_budget_is_bounded() {
+        const POOLS: u32 = 294;
+        for attempts in [
+            PublicRpcConfig::RETRY_ATTEMPTS,
+            PrivateRpcConfig::RETRY_ATTEMPTS,
+            EnterpriseConfig::RETRY_ATTEMPTS,
+        ] {
+            assert!(attempts <= 5, "retry budget {attempts} would amplify too far");
+        }
+        assert_eq!(POOLS * (1 + PublicRpcConfig::RETRY_ATTEMPTS), 1764);
+        assert_eq!(POOLS * (1 + EnterpriseConfig::RETRY_ATTEMPTS), 588);
+    }
+
+    /// `build()` must refuse a concurrency that would stampede any endpoint.
+    #[test]
+    fn build_rejects_unbounded_concurrency() {
+        assert!(PoolsDataClientBuilder::new()
+            .max_concurrent_requests(101)
+            .build("https://example.com")
+            .is_err());
+        assert!(PoolsDataClientBuilder::new()
+            .max_concurrent_requests(0)
+            .build("https://example.com")
+            .is_err());
+    }
 }
