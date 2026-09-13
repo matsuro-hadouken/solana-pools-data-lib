@@ -85,7 +85,7 @@ async fn main() -> Result<()> {
         ));
     }
 
-    rows.sort_by(|a, b| b.3.cmp(&a.3));
+    rows.sort_by_key(|r| std::cmp::Reverse(r.3));
     println!("{:<26} {:>7} {:>16} {:>6}  authority", "pool", "accts", "delegated SOL", "vals");
     for (name, auth, accts, lamports, vals) in &rows {
         println!(

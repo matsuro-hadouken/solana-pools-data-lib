@@ -191,3 +191,82 @@ async fn unknown_pool_names_cost_zero_requests() {
         "an unknown name must not reach the network"
     );
 }
+
+/// Fails every request naming `fail_for`; empty success for everything else.
+fn spawn_partial_failure_rpc(fail_for: &'static str) -> FakeRpc {
+    spawn_fake_rpc(move |req| {
+        if req.contains(fail_for) {
+            format!(
+                r#"{{"jsonrpc":"2.0","id":{},"error":{{"code":-32005,"message":"rate limited"}}}}"#,
+                id_of(req)
+            )
+        } else {
+            empty_result(req)
+        }
+    })
+}
+
+#[tokio::test]
+async fn fetch_pools_hides_partial_failure_but_strict_does_not() {
+    // The hazard: fetch_pools returns Ok when ANY pool succeeds and drops the
+    // rest. On a 429-ing endpoint a 294-pool refresh can return one row and
+    // still look successful. A writer treating "absent" as "delete" would then
+    // wipe most of a table.
+    const JITO_AUTH: &str = "6iQKfEyhr3bZMotVkW6beNZz5CPAkiwvgV2CTje9pVSS";
+    let names = ["jito", "marinade", "blazestake"];
+
+    // Lenient: silently returns only the survivors.
+    let fake = spawn_partial_failure_rpc(JITO_AUTH);
+    let client = PoolsDataClient::builder()
+        .rate_limit(1000)
+        .retry_attempts(0)
+        .build(&fake.url)
+        .and_then(PoolsDataClient::from_config)
+        .expect("client");
+    let lenient = client.fetch_pools(&names).await.expect("lenient returns Ok");
+    assert_eq!(lenient.len(), 2, "one pool silently vanished");
+    assert!(!lenient.contains_key("jito"));
+
+    // Strict: same conditions, refuses the partial result.
+    let fake2 = spawn_partial_failure_rpc(JITO_AUTH);
+    let client2 = PoolsDataClient::builder()
+        .rate_limit(1000)
+        .retry_attempts(0)
+        .build(&fake2.url)
+        .and_then(PoolsDataClient::from_config)
+        .expect("client");
+    let err = client2
+        .fetch_pools_strict(&names)
+        .await
+        .expect_err("strict must reject a partial result");
+
+    match err {
+        solana_pools_data_lib::PoolsDataError::BatchOperationFailed { successful, failed } => {
+            assert_eq!(successful, 2);
+            assert_eq!(failed, 1);
+        }
+        other => panic!("expected BatchOperationFailed, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn strict_returns_all_pools_when_none_fail() {
+    // Strict must not be pessimistic: a fully successful refresh returns
+    // everything, including reserve-only pools with zero stake accounts.
+    let fake = spawn_fake_rpc(empty_result);
+    let client = PoolsDataClient::builder()
+        .rate_limit(1000)
+        .retry_attempts(0)
+        .build(&fake.url)
+        .and_then(PoolsDataClient::from_config)
+        .expect("client");
+
+    let names = ["jito", "marinade", "blazestake"];
+    let out = client.fetch_pools_strict(&names).await.expect("all succeeded");
+    assert_eq!(out.len(), names.len());
+    assert_eq!(
+        fake.hits.load(Ordering::SeqCst),
+        names.len(),
+        "strict must not cost extra requests"
+    );
+}

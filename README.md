@@ -39,6 +39,8 @@ Rust library for fetching Solana stake pools data. Supports production and debug
 - `PoolsDataClient::test_connection()` - Tests RPC endpoint connectivity
 - `PoolsDataClient::fetch_pools(pool_names)` - Returns production data for specified pools
 - `PoolsDataClient::fetch_all_pools()` - Returns production data for all supported pools
+- `PoolsDataClient::fetch_pools_strict(pool_names)` - Like `fetch_pools`, but errors if **any** pool fails
+- `PoolsDataClient::fetch_all_pools_strict()` - Like `fetch_all_pools`, but errors if **any** pool fails
 - `PoolsDataClient::fetch_pools_debug(pool_names)` - Returns debug data for specified pools with raw RPC fields
 
 ## Usage Note
@@ -95,6 +97,24 @@ List: `PoolsDataClient::list_available_pools()`
 
 ## Error Handling
 All API methods return `Result`. Partial failures available in debug format.
+
+**Partial results are silent by default.** `fetch_pools` and `fetch_all_pools` return
+`Ok` when *at least one* pool succeeds, dropping the rest. On a rate-limited endpoint
+that means a refresh can 429 most of its pools and still look successful — a writer
+that treats "absent from the response" as "delete this row" would then wipe most of a
+table.
+
+For scheduled refreshes that write to a database, prefer the strict variants, which
+return `BatchOperationFailed { successful, failed }` and log each failure:
+
+```rust
+match client.fetch_all_pools_strict().await {
+    Ok(pools) => write_to_db(&pools).await?,   // every pool present
+    Err(e) => log::error!("refresh incomplete, not writing: {e}"),
+}
+```
+
+Use `fetch_pools_debug()` if you want the partial data *and* the failure list.
 
 ## Common Use Cases
 - Database storage (production format)

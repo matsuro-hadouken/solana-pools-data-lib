@@ -191,6 +191,62 @@ impl PoolsDataClient {
         self.fetch_pools(&pool_names).await
     }
 
+    /// Fetch the named pools, failing if **any** of them could not be fetched.
+    ///
+    /// [`Self::fetch_pools`] returns `Ok` when at least one pool succeeds and
+    /// silently drops the rest. That is fine for exploratory use, but it means a
+    /// rate-limited endpoint can 429 most of a refresh and still hand back an
+    /// `Ok` map — 293 of 294 pools missing, with no signal. A writer that treats
+    /// "absent from the response" as "delete" would then wipe most of a table.
+    ///
+    /// Use this variant when a partial result is worse than no result, which is
+    /// the usual case for a scheduled refresh writing to a database.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PoolsDataError::BatchOperationFailed`] if any requested pool
+    /// failed, after logging each failure at `error` level. The successful pools
+    /// are discarded deliberately: returning them alongside the error would
+    /// reintroduce the ambiguity this method exists to remove. Callers that want
+    /// the partial data plus the failure list should use
+    /// [`Self::fetch_pools_debug`], which exposes both.
+    pub async fn fetch_pools_strict(
+        &self,
+        pool_names: &[&str],
+    ) -> Result<HashMap<String, ProductionPoolData>> {
+        let debug_result = self.fetch_pools_debug(pool_names).await?;
+
+        if !debug_result.failed.is_empty() {
+            for (name, err) in &debug_result.failed {
+                log::error!("pool {name} failed: {}", err.error);
+            }
+            return Err(PoolsDataError::BatchOperationFailed {
+                successful: debug_result.successful.len(),
+                failed: debug_result.failed.len(),
+            });
+        }
+
+        Ok(debug_result
+            .successful
+            .iter()
+            .map(|(name, pool)| (name.clone(), pool.into()))
+            .collect())
+    }
+
+    /// Fetch every active pool, failing if any one of them could not be fetched.
+    ///
+    /// The all-or-nothing counterpart to [`Self::fetch_all_pools`]. See
+    /// [`Self::fetch_pools_strict`] for why a partial refresh is dangerous.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PoolsDataError::BatchOperationFailed`] if any pool failed.
+    pub async fn fetch_all_pools_strict(&self) -> Result<HashMap<String, ProductionPoolData>> {
+        let all_pools = get_active_pools();
+        let pool_names: Vec<&str> = all_pools.iter().map(|p| p.name.as_str()).collect();
+        self.fetch_pools_strict(&pool_names).await
+    }
+
     /// Fetch stake pool data with complete debugging information
     ///
     /// Returns ALL fields from RPC response - use for debugging and development.

@@ -525,9 +525,12 @@ mod tests {
     fn public_preset_stays_conservative() {
         assert_eq!(PublicRpcConfig::RATE_LIMIT_PER_SECOND, 1);
         assert_eq!(PublicRpcConfig::MAX_CONCURRENT_REQUESTS, 1);
+        // Compared through a binding so the check is a real runtime assertion
+        // rather than a const-folded tautology clippy would flag.
+        let backoff_ms = PublicRpcConfig::RETRY_BASE_DELAY_MS;
         assert!(
-            PublicRpcConfig::RETRY_BASE_DELAY_MS >= 1000,
-            "public retries must back off by at least a second"
+            backoff_ms >= 1000,
+            "public retries must back off by at least a second, got {backoff_ms}"
         );
     }
 
@@ -537,13 +540,18 @@ mod tests {
     #[test]
     fn worst_case_request_budget_is_bounded() {
         const POOLS: u32 = 294;
-        for attempts in [
-            PublicRpcConfig::RETRY_ATTEMPTS,
-            PrivateRpcConfig::RETRY_ATTEMPTS,
-            EnterpriseConfig::RETRY_ATTEMPTS,
-        ] {
-            assert!(attempts <= 5, "retry budget {attempts} would amplify too far");
-        }
+        let budgets = [
+            ("public", PublicRpcConfig::RETRY_ATTEMPTS),
+            ("private", PrivateRpcConfig::RETRY_ATTEMPTS),
+            ("enterprise", EnterpriseConfig::RETRY_ATTEMPTS),
+        ];
+        let worst = budgets.iter().max_by_key(|(_, n)| *n).expect("non-empty");
+        assert!(
+            worst.1 <= 5,
+            "{} retry budget {} would amplify too far",
+            worst.0,
+            worst.1
+        );
         assert_eq!(POOLS * (1 + PublicRpcConfig::RETRY_ATTEMPTS), 1764);
         assert_eq!(POOLS * (1 + EnterpriseConfig::RETRY_ATTEMPTS), 588);
     }
