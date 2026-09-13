@@ -357,11 +357,6 @@ impl PoolsDataClient {
             )
         })?;
 
-        // Apply rate limiting if configured
-        if let Some(limiter) = &rate_limiter {
-            limiter.until_ready().await;
-        }
-
         log::debug!("Fetching pool: {}", pool_info.name);
 
         #[allow(clippy::cast_possible_truncation)]
@@ -374,6 +369,15 @@ impl PoolsDataClient {
         let authority = pool_info.authority.clone();
 
         let result = Retry::spawn(retry_strategy, || async {
+            // Every attempt takes a rate-limit permit, not just the first.
+            // Awaiting the limiter once outside this closure let retries bypass
+            // the configured rate entirely — so a struggling endpoint would be
+            // hit faster than configured at precisely the moment it is failing.
+            // Backoff alone does not bound the aggregate: up to `max_concurrent`
+            // pools retry in parallel, each on its own uncounted timeline.
+            if let Some(limiter) = &rate_limiter {
+                limiter.until_ready().await;
+            }
             rpc_client
                 .fetch_stake_accounts_for_authority(&pool_info.authority)
                 .await

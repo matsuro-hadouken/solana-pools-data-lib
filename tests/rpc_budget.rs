@@ -192,6 +192,38 @@ async fn unknown_pool_names_cost_zero_requests() {
     );
 }
 
+#[tokio::test]
+async fn retries_consume_rate_limit_permits() {
+    // The limiter used to be awaited once BEFORE the retry loop, so only the
+    // first attempt was paced and every retry bypassed the configured rate —
+    // hitting a struggling endpoint faster exactly when it is already failing.
+    // With the limiter inside the retry closure, 3 attempts at 1 req/s must take
+    // roughly 2 seconds (first is free from the burst allowance, then 1/s).
+    let fake = spawn_fake_rpc(|req| {
+        format!(
+            r#"{{"jsonrpc":"2.0","id":{},"error":{{"code":-32005,"message":"rate limited"}}}}"#,
+            id_of(req)
+        )
+    });
+    let client = PoolsDataClient::builder()
+        .rate_limit(1)
+        .retry_attempts(2)
+        .retry_base_delay(1) // backoff ~0, so elapsed time is the limiter's doing
+        .build(&fake.url)
+        .and_then(PoolsDataClient::from_config)
+        .expect("client");
+
+    let started = std::time::Instant::now();
+    let _ = client.fetch_pools(&["jito"]).await;
+    let elapsed = started.elapsed();
+
+    assert_eq!(fake.hits.load(Ordering::SeqCst), 3, "1 attempt + 2 retries");
+    assert!(
+        elapsed >= std::time::Duration::from_millis(1500),
+        "retries bypassed the rate limiter: 3 attempts at 1/s took only {elapsed:?}"
+    );
+}
+
 /// Fails every request naming `fail_for`; empty success for everything else.
 fn spawn_partial_failure_rpc(fail_for: &'static str) -> FakeRpc {
     spawn_fake_rpc(move |req| {
