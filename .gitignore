@@ -6,3 +6,5 @@
 /snapshot-*.json
 /snapshot.json
 /legacy61.txt
+# generator temp files, if a run is interrupted between write and rename
+/src/*.tmp

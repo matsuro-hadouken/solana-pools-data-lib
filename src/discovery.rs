@@ -319,6 +319,20 @@ pub fn parse_registry(src: &str) -> Result<Registry, String> {
             return Err(format!("duplicate authority {} (name {})", e.authority, e.name));
         }
     }
+    // Names must be unique too, not just authorities. POOLS_BY_NAME is built with
+    // collect(), so two entries sharing a name silently rebind that key to
+    // whichever lands later — and a name is public API. A hand-added MANUAL entry
+    // reusing a GENERATED or RETIRED name would otherwise survive a full
+    // regeneration, round-trip guard included.
+    let mut names = HashSet::new();
+    for e in reg.all() {
+        if !names.insert(e.name.clone()) {
+            return Err(format!(
+                "duplicate pool name {} (authority {}) — a name binds one authority only",
+                e.name, e.authority
+            ));
+        }
+    }
     Ok(reg)
 }
 
@@ -478,7 +492,11 @@ pub fn assign_names(reg: &Registry, candidates: &[Candidate]) -> Registry {
             })
             .unwrap_or_else(|| {
                 note = Some("TODO: name".into());
-                format!("unnamed_{}", &c.pool[..c.pool.len().min(8)])
+                // Take 8 *characters*, not 8 bytes. Real pool keys are base58 so
+                // the two coincide, but `assign_names` is public and a byte slice
+                // panics on any multi-byte input (`"€€€"` has no boundary at 8).
+                let prefix: String = c.pool.chars().take(8).collect();
+                format!("unnamed_{prefix}")
             });
 
         let mut name = base.clone();
@@ -1113,6 +1131,40 @@ mod tests {
         );
         let fourth = assign_names(&third, &[cand("A1", "PoolAddr12345", None)]);
         assert_eq!(fourth.generated[0].note.as_deref(), Some("TODO: name"));
+    }
+
+    #[test]
+    fn rejects_duplicate_names_across_sections() {
+        // POOLS_BY_NAME is built with collect(), so two entries sharing a name
+        // silently rebind that key to whichever lands later — and the name is
+        // public API. A hand-added MANUAL entry reusing a GENERATED name would
+        // otherwise survive regeneration and the round-trip guard.
+        let src = r#"
+            // ---- MANUAL ----
+            PoolInfo::new("jito", "ManualAuthDifferent"),
+            // ---- END MANUAL ----
+            // ---- GENERATED ----
+            PoolInfo::new("jito", "6iQKfEyhr3bZMotVkW6beNZz5CPAkiwvgV2CTje9pVSS"),
+            // ---- END GENERATED ----
+            // ---- RETIRED ----
+            // ---- END RETIRED ----
+        "#;
+        let err = parse_registry(src).unwrap_err();
+        assert!(err.contains("duplicate pool name"), "got: {err}");
+        assert!(err.contains("jito"), "error should name the collision: {err}");
+    }
+
+    #[test]
+    fn unnamed_fallback_does_not_panic_on_multibyte_pool_keys() {
+        // assign_names is public. Real pool keys are base58, but a byte slice at
+        // 8 panics on any multi-byte input — "€€€" has no boundary there.
+        let out = assign_names(&Registry::default(), &[cand("AuthX", "€€€€€", None)]);
+        assert_eq!(out.generated.len(), 1);
+        assert!(
+            out.generated[0].name.starts_with("unnamed_"),
+            "got {}",
+            out.generated[0].name
+        );
     }
 
     #[test]

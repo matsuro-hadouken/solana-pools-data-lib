@@ -91,6 +91,14 @@ pub struct PoolsDataClient {
 impl PoolsDataClient {
     /// Fetch all pools and return canonical statistics for each pool, grouped by validator and account state
     /// Does not affect legacy API. Accepts `current_epoch` for correct state classification.
+    ///
+    /// **Returns partial results.** Like [`Self::fetch_all_pools`], this succeeds
+    /// when at least one pool is fetched, so a rate-limited endpoint can 429 most
+    /// of a refresh and still yield `Ok` with a fraction of the rows — despite the
+    /// name saying "all pools". Use
+    /// [`Self::fetch_all_pools_with_stats_strict`] when a partial result is worse
+    /// than no result, which is the usual case when writing to a database.
+    ///
     /// # Errors
     /// Returns an error if pool statistics cannot be fetched or calculated.
     pub async fn fetch_all_pools_with_stats(&self, current_epoch: u64) -> Result<std::collections::HashMap<String, statistics::PoolStatisticsFull>> {
@@ -110,6 +118,39 @@ impl PoolsDataClient {
         }
         Ok(result)
     }
+
+    /// Fetch statistics for every active pool, failing if any pool could not be
+    /// fetched.
+    ///
+    /// The all-or-nothing counterpart to [`Self::fetch_all_pools_with_stats`].
+    /// See [`Self::fetch_pools_strict`] for why a partial refresh is dangerous.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PoolsDataError::BatchOperationFailed`] if any pool failed, or an
+    /// error if the epoch is invalid or statistics cannot be calculated.
+    pub async fn fetch_all_pools_with_stats_strict(
+        &self,
+        current_epoch: u64,
+    ) -> Result<std::collections::HashMap<String, statistics::PoolStatisticsFull>> {
+        if current_epoch == 0 || current_epoch == u64::MAX || current_epoch > 10_000_000_000 {
+            return Err(PoolsDataError::InternalError {
+                message: format!(
+                    "Invalid current_epoch passed to fetch_all_pools_with_stats_strict: {current_epoch}"
+                ),
+            });
+        }
+        let all_pools = get_active_pools();
+        let pool_names: Vec<&str> = all_pools.iter().map(|p| p.name.as_str()).collect();
+        let pools = self.fetch_pools_strict(&pool_names).await?;
+        let mut result = std::collections::HashMap::new();
+        for (pool_name, pool) in &pools {
+            let stats = statistics_calc::calculate_pool_statistics_full(pool, current_epoch)?;
+            result.insert(pool_name.clone(), stats);
+        }
+        Ok(result)
+    }
+
     /// Create a new client builder
     #[must_use]
     pub fn builder() -> PoolsDataClientBuilder {
@@ -204,16 +245,37 @@ impl PoolsDataClient {
     ///
     /// # Errors
     ///
-    /// Returns [`PoolsDataError::BatchOperationFailed`] if any requested pool
-    /// failed, after logging each failure at `error` level. The successful pools
-    /// are discarded deliberately: returning them alongside the error would
-    /// reintroduce the ambiguity this method exists to remove. Callers that want
-    /// the partial data plus the failure list should use
+    /// Always `Err` unless every requested pool was fetched. Which error depends
+    /// on how the request failed:
+    ///
+    /// - a name that is not in the registry — [`PoolsDataError::PoolNotFound`],
+    ///   raised before any RPC call is made;
+    /// - some pools failed — [`PoolsDataError::BatchOperationFailed`] carrying the
+    ///   success/failure counts, after logging each failure at `error` level;
+    /// - *every* pool failed — the first underlying [`PoolsDataError::NetworkError`]
+    ///   or [`PoolsDataError::RpcError`], propagated from
+    ///   [`Self::fetch_pools_debug`], because a total outage is more usefully
+    ///   reported by its cause than by a count. The all-or-nothing guarantee holds
+    ///   in every case; only the error variant differs.
+    ///
+    /// The successful pools are discarded deliberately: returning them alongside
+    /// the error would reintroduce the ambiguity this method exists to remove.
+    /// Callers that want the partial data plus the failure list should use
     /// [`Self::fetch_pools_debug`], which exposes both.
     pub async fn fetch_pools_strict(
         &self,
         pool_names: &[&str],
     ) -> Result<HashMap<String, ProductionPoolData>> {
+        // Unknown names are filter_map'd away by get_pools_by_names before any
+        // task is created, so a typo would otherwise return Ok with fewer rows
+        // than requested — the silent shortfall this method exists to prevent.
+        // Check before spending any RPC budget.
+        if let Some(missing) = pool_names.iter().find(|n| !crate::pools::pool_exists(n)) {
+            return Err(PoolsDataError::PoolNotFound {
+                pool_name: (*missing).to_string(),
+            });
+        }
+
         let debug_result = self.fetch_pools_debug(pool_names).await?;
 
         if !debug_result.failed.is_empty() {

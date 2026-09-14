@@ -304,6 +304,34 @@ async fn strict_returns_all_pools_when_none_fail() {
 }
 
 #[tokio::test]
+async fn strict_rejects_a_request_naming_a_pool_that_does_not_exist() {
+    // get_pools_by_names filter_maps unknown names away before any task is
+    // created, so strict never learns the name was requested. A typo'd or
+    // retired-and-removed name would therefore return Ok with fewer rows than
+    // asked for — exactly the silent shortfall strict exists to prevent.
+    let fake = spawn_fake_rpc(empty_result);
+    let client = PoolsDataClient::builder()
+        .rate_limit(1000)
+        .retry_attempts(0)
+        .build(&fake.url)
+        .and_then(PoolsDataClient::from_config)
+        .expect("client");
+
+    let err = client
+        .fetch_pools_strict(&["jito", "jtoi"])
+        .await
+        .expect_err("an unknown name must fail the whole request");
+
+    let msg = err.to_string();
+    assert!(msg.contains("jtoi"), "error should name the bad pool, got: {msg}");
+    assert_eq!(
+        fake.hits.load(Ordering::SeqCst),
+        0,
+        "an unresolvable request must not spend RPC budget at all"
+    );
+}
+
+#[tokio::test]
 async fn a_redirecting_endpoint_cannot_multiply_requests() {
     // reqwest follows up to 10 redirects by default, which multiplies requests
     // BELOW the layer the other tests count: they saw "1 request per pool" while

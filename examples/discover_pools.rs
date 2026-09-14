@@ -233,13 +233,13 @@ async fn main() -> Result<(), BoxErr> {
 
     // splice() fails safe: a marker line it cannot match exactly leaves that
     // region untouched and hands back the input. parse_registry now matches
-    // markers with the same exact predicate, so the two agree on GENERATED —
-    // but a file missing (or misspelling) only its MANUAL or RETIRED markers
-    // still parses fine and splices those regions to a no-op, and the generator
-    // would rename an unchanged file into place and report success. Re-parse
-    // the output and confirm it holds what we wrote. (Byte-comparing against
-    // `existing` cannot be the test: an idempotent re-run legitimately
-    // reproduces the same bytes.)
+    // markers with the same exact predicate AND requires one ordered
+    // opener/closer pair per section, so a file missing or misspelling any
+    // marker is rejected outright rather than silently splicing to a no-op.
+    // This guard remains the check that what we are about to rename into place
+    // actually contains what we composed. (Byte-comparing against `existing`
+    // cannot be the test: an idempotent re-run legitimately reproduces the same
+    // bytes.)
     let round_trip =
         parse_registry(&spliced).map_err(|e| format!("spliced output does not re-parse: {e}"))?;
     if entry_keys(&round_trip) != entry_keys(&updated) {
@@ -255,7 +255,11 @@ async fn main() -> Result<(), BoxErr> {
         .into());
     }
 
-    let tmp = format!("{out_path}.tmp");
+    // PID-suffixed so two concurrent runs (a cron job and a manual invocation,
+    // say) cannot write the same temp path and interleave. The rename itself is
+    // atomic on POSIX within a filesystem, so an interrupted run leaves the old
+    // registry intact rather than a half-written one.
+    let tmp = format!("{out_path}.{}.tmp", std::process::id());
     std::fs::write(&tmp, &spliced)?;
     std::fs::rename(&tmp, out_path)?;
     eprintln!(
