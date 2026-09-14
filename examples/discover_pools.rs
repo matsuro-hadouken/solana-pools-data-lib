@@ -67,10 +67,31 @@ async fn main() -> Result<(), BoxErr> {
     // fat-fingered `--min-sol 1o` fall back to the default — on a tool whose
     // output is permanent public API surface, both deserve a stop.
     let (mut min_sol, mut verify) = (1.0f64, false);
+    // Guards against a truncated-but-successful discovery response: an RPC or
+    // proxy that returns a valid, non-empty, partial account array would retire
+    // every omitted pool. Only a fully empty program response aborts otherwise.
+    //
+    // 5% chosen by simulating against real chain state (262 generated pools):
+    //   legitimate churn  only 9 pools (3.4%) sit within 10% of the cutoff, so a
+    //                     natural one-epoch drop cannot plausibly reach 5%
+    //   truncation        the mildest single-program case (SanctumMulti at 50%)
+    //                     is already 8.0%; losing any whole program is 15.6%+
+    // 5% sits in the empty band between those, catching 16 of 17 modelled
+    // truncation scenarios with effectively no false-positive exposure.
+    let mut max_shrink_pct = 5.0f64;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--verify" => verify = true,
+            "--max-shrink-pct" => {
+                let v = args.next().ok_or("--max-shrink-pct needs a value")?;
+                max_shrink_pct = v
+                    .parse()
+                    .map_err(|_| format!("--max-shrink-pct: {v:?} is not a number"))?;
+                if !max_shrink_pct.is_finite() || !(0.0..=100.0).contains(&max_shrink_pct) {
+                    return Err(format!("--max-shrink-pct: {v:?} must be between 0 and 100").into());
+                }
+            }
             "--min-sol" => {
                 let v = args.next().ok_or("--min-sol needs a value")?;
                 min_sol = v
@@ -84,7 +105,8 @@ async fn main() -> Result<(), BoxErr> {
             }
             other => {
                 return Err(format!(
-                    "unrecognized argument {other:?}; expected `--min-sol <SOL>` and/or `--verify`"
+                    "unrecognized argument {other:?}; expected `--min-sol <SOL>`, \
+                     `--max-shrink-pct <PCT>` and/or `--verify`"
                 )
                 .into())
             }
@@ -229,6 +251,38 @@ async fn main() -> Result<(), BoxErr> {
         candidates.len()
     );
     let updated = assign_names(&reg, &candidates);
+
+    // A truncated-but-successful discovery response looks exactly like "these
+    // pools are gone": every omitted pool is retired. Only a wholly empty
+    // program response aborts earlier, so this catches the partial case. Compare
+    // against what the file held before, not against the candidate count, since
+    // the point is the direction and size of the change to the committed set.
+    let before = reg.generated.len();
+    let after = updated.generated.len();
+    if before > 0 && after < before {
+        let shrink = (before - after) as f64 / before as f64 * 100.0;
+        if shrink > max_shrink_pct {
+            let retired: Vec<&str> = updated
+                .retired
+                .iter()
+                .filter(|e| !reg.retired.iter().any(|r| r.authority == e.authority))
+                .map(|e| e.name.as_str())
+                .collect();
+            return Err(format!(
+                "ABORT: generated pools {before} -> {after} ({shrink:.1}% smaller), over the \
+                 {max_shrink_pct:.1}% limit. A truncated RPC response looks identical to pools \
+                 genuinely disappearing, so nothing was written. {} pools would have been \
+                 retired: {}{}. Re-run; if the shrink is real, pass \
+                 --max-shrink-pct {:.0} to accept it.",
+                retired.len(),
+                retired.iter().take(10).cloned().collect::<Vec<_>>().join(", "),
+                if retired.len() > 10 { ", …" } else { "" },
+                shrink.ceil()
+            )
+            .into());
+        }
+    }
+
     let spliced = splice(&existing, &updated, &provenance);
 
     // splice() fails safe: a marker line it cannot match exactly leaves that

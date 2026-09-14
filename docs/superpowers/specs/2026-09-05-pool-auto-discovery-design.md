@@ -498,3 +498,50 @@ cargo +1.93.0 build --locked --features discover -> Finished
 `rust-version` is now `1.82`. The repository has no CI and no `rust-toolchain.toml`, so
 nothing enforces this; it drifted once already and will drift again without a check that
 builds on the declared version.
+
+## Truncated-response guard, and how 5% was chosen
+
+A discovery response can be *successful, non-empty, and partial* — an RPC or
+proxy returning only some accounts. Nothing distinguishes that from the pools
+genuinely disappearing, and the generator's response to a disappeared pool is to
+retire it. Only a wholly empty program response aborted.
+
+`--max-shrink-pct` (default **5**) aborts when the generated set shrinks by more
+than that fraction. The threshold was picked by simulating against real chain
+state rather than chosen by feel. Baseline: 262 generated pools — SPL 86,
+SanctumSpl 135, SanctumMulti 41.
+
+**Legitimate churn is tiny.** A pool leaves the set only by falling under
+`--min-sol`, so only pools near the line can move at all:
+
+| distance above cutoff | pools | share of set |
+|---|---|---|
+| within 10% | 9 | 3.4% |
+| within 50% | 30 | 11.5% |
+| within 2x | 36 | 13.7% |
+
+Even all 9 near-cutoff pools dropping in one epoch is 3.4%, and that is a wildly
+pessimistic epoch.
+
+**Truncation is not tiny.** Drop in generated count by scenario:
+
+| scenario | drop |
+|---|---|
+| all programs return 99% | 1.5% |
+| all programs return 95% | 5.7% |
+| all programs return 90% | 10.7% |
+| SanctumMulti returns 50% (smallest single-program case) | 8.0% |
+| SanctumMulti returns nothing | 15.6% |
+| SPL returns nothing | 32.8% |
+| SanctumSpl returns nothing | 51.5% |
+| proxy caps each program at 500 accounts | 33.2% |
+
+**The gap.** Plausible churn tops out near 3.4%; the smallest meaningful
+truncation is 8.0%. 5% sits in the empty band between them, catching 16 of 17
+modelled scenarios with no realistic false-positive exposure. The one miss —
+every program returning 99% — costs about four wrongly retired pools, and
+retirement is self-healing: a retired pool that reappears is promoted back with
+its frozen name intact, so the damage is temporary and bounded.
+
+Raising the threshold catches less for no real safety gain (10% drops to 14/17
+scenarios), and lowering it to 1-2% starts colliding with ordinary churn.
