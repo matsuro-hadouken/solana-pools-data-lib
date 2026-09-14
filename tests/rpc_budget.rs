@@ -302,3 +302,49 @@ async fn strict_returns_all_pools_when_none_fail() {
         "strict must not cost extra requests"
     );
 }
+
+#[tokio::test]
+async fn a_redirecting_endpoint_cannot_multiply_requests() {
+    // reqwest follows up to 10 redirects by default, which multiplies requests
+    // BELOW the layer the other tests count: they saw "1 request per pool" while
+    // the wire saw 11 (measured). A 294-pool refresh would become 3,234 requests
+    // before retries compound it. Realistic triggers are mundane — a provider
+    // domain move, an http->https upgrade, a trailing-slash redirect.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().unwrap().port();
+    let hits = Arc::new(AtomicUsize::new(0));
+    let h = Arc::clone(&hits);
+
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut s) = stream else { continue };
+            let mut buf = [0u8; 8192];
+            let _ = s.read(&mut buf);
+            h.fetch_add(1, Ordering::SeqCst);
+            let resp = format!(
+                "HTTP/1.1 307 Temporary Redirect\r\nLocation: http://127.0.0.1:{port}/next\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            );
+            let _ = s.write_all(resp.as_bytes());
+            let _ = s.flush();
+        }
+    });
+
+    let client = PoolsDataClient::builder()
+        .rate_limit(1000)
+        .retry_attempts(0)
+        .build(&format!("http://127.0.0.1:{port}"))
+        .and_then(PoolsDataClient::from_config)
+        .expect("client");
+
+    let result = client.fetch_pools(&["jito"]).await;
+
+    assert!(
+        result.is_err(),
+        "a redirect must surface as an error, not be followed"
+    );
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        1,
+        "redirects were followed and multiplied the per-pool request cost"
+    );
+}

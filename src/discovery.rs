@@ -398,7 +398,15 @@ fn merge_note(previous: Option<&str>, add: &[&str]) -> Option<String> {
                 .collect()
         })
         .unwrap_or_default();
-    parts.extend(add);
+    // Membership-checked rather than a bare extend. Unmanaged markers such as
+    // EMPTY_NOTE survive in `previous` by design, so appending blindly re-added
+    // them on every run and the note grew without bound — which breaks the
+    // byte-identical-output guarantee the committed registry relies on.
+    for part in add {
+        if !parts.contains(part) {
+            parts.push(part);
+        }
+    }
     (!parts.is_empty()).then(|| parts.join("; "))
 }
 
@@ -1105,6 +1113,39 @@ mod tests {
         );
         let fourth = assign_names(&third, &[cand("A1", "PoolAddr12345", None)]);
         assert_eq!(fourth.generated[0].note.as_deref(), Some("TODO: name"));
+    }
+
+    #[test]
+    fn repeated_verify_runs_do_not_accumulate_the_empty_note() {
+        // EMPTY_NOTE is deliberately NOT managed, so merge_note does not strip it
+        // from the previous note — that is what lets it survive a run made
+        // without --verify. But the add-list was appended without a membership
+        // check, so a second --verify run re-added the same text and the note
+        // grew on every run. Unbounded growth breaks the idempotency guarantee
+        // the committed registry depends on.
+        let mut reg = Registry::default();
+        reg.generated.push(Entry {
+            name: "phantom".into(),
+            authority: "A1".into(),
+            note: None,
+        });
+
+        let mut empty = cand("A1", "PoolAddr12345", None);
+        empty.verify_empty = true;
+
+        let run1 = assign_names(&reg, &[empty.clone()]);
+        let run2 = assign_names(&run1, &[empty.clone()]);
+        let run3 = assign_names(&run2, &[empty]);
+
+        assert_eq!(run1.generated[0].note.as_deref(), Some("verify: no stake accounts"));
+        assert_eq!(
+            run2.generated[0].note, run1.generated[0].note,
+            "second --verify run must not re-append the note"
+        );
+        assert_eq!(
+            run3.generated[0].note, run1.generated[0].note,
+            "note must stay stable across repeated runs"
+        );
     }
 
     #[test]

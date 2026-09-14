@@ -194,6 +194,13 @@ impl RpcClient {
         let client = reqwest::Client::builder()
             .timeout(timeout)
             .user_agent("pools-data-lib/0.1.0")
+            // reqwest follows up to 10 redirects by default, which silently
+            // multiplies requests below the layer that counts them: one pool's
+            // query becomes 11 HTTP requests (measured), so a 294-pool refresh
+            // becomes 3,234 before retries compound it. A JSON-RPC POST endpoint
+            // has no legitimate reason to redirect, so surface it as an error
+            // rather than paying for it.
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .expect("Failed to create HTTP client");
 
