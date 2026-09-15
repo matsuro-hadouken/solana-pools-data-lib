@@ -113,11 +113,18 @@ impl PoolsDataError {
             PoolsDataError::NetworkError { .. }
             | PoolsDataError::RateLimitExceeded { .. }
             | PoolsDataError::RequestTimeout { .. }
+            // ParseError covers response *decoding*, which is usually
+            // transport-adjacent rather than permanent: a proxy returning
+            // truncated JSON, an HTML error page with a 200, a body missing
+            // `result`. One backend behind a load balancer can fail this while
+            // the next succeeds, so the retry budget is worth spending. A
+            // genuinely malformed account is InvalidStakeData, which is not
+            // retried.
+            | PoolsDataError::ParseError { .. }
             | PoolsDataError::InternalError { .. } => true,
 
             // Non-retryable errors - permanent issues that cannot be resolved by retrying
-            PoolsDataError::ParseError { .. }
-            | PoolsDataError::ConfigurationError { .. }
+            PoolsDataError::ConfigurationError { .. }
             | PoolsDataError::PoolNotFound { .. }
             | PoolsDataError::NoStakeAccounts { .. }
             | PoolsDataError::InvalidStakeData { .. }
@@ -178,10 +185,23 @@ mod tests {
         };
         assert!(PoolError::is_retryable(&network_error));
 
+        // ParseError was reclassified to retryable when the retry loop started
+        // actually consulting this function. It covers response *decoding*,
+        // which is usually transport-adjacent — a proxy truncating JSON, an HTML
+        // error page served with a 200, a body missing `result`. One backend
+        // behind a load balancer can fail that while the next succeeds. A few
+        // wasted retries cost less than aborting a strict 294-pool refresh over
+        // one transient bad response. A genuinely malformed on-chain account is
+        // InvalidStakeData, asserted non-retryable below.
         let parse_error = PoolsDataError::ParseError {
             message: "Invalid JSON".to_string(),
         };
-        assert!(!PoolError::is_retryable(&parse_error));
+        assert!(PoolError::is_retryable(&parse_error));
+
+        let invalid_stake = PoolsDataError::InvalidStakeData {
+            message: "account did not parse".to_string(),
+        };
+        assert!(!PoolError::is_retryable(&invalid_stake));
 
         let rate_limit_error = PoolsDataError::RateLimitExceeded {
             message: "Too many requests".to_string(),

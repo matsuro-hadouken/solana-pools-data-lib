@@ -377,6 +377,50 @@ async fn a_redirecting_endpoint_cannot_multiply_requests() {
     );
 }
 
+/// One real jsonParsed stake account, with the lockup timestamp injectable.
+fn stake_account_json(unix_timestamp: &str) -> String {
+    format!(
+        r#"{{"pubkey":"1YayC3Pwb46y1DJTeV3PSzAv23cT9k48RS2netCfJqz","account":{{"lamports":31976057508114,"data":{{"program":"stake","parsed":{{"info":{{"meta":{{"authorized":{{"staker":"6iQKfEyhr3bZMotVkW6beNZz5CPAkiwvgV2CTje9pVSS","withdrawer":"6iQKfEyhr3bZMotVkW6beNZz5CPAkiwvgV2CTje9pVSS"}},"lockup":{{"custodian":"11111111111111111111111111111111","epoch":0,"unixTimestamp":{unix_timestamp}}},"rentExemptReserve":"2282880"}},"stake":{{"creditsObserved":1213524427,"delegation":{{"activationEpoch":"884","deactivationEpoch":"18446744073709551615","stake":"31976055841874","voter":"7tKWFaaLi2FJSqukHxUrnXph8M3ynrqn3kEkKPpgcNHZ"}}}}}},"type":"delegated"}},"space":200}},"owner":"Stake11111111111111111111111111111111111111","executable":false,"rentEpoch":18446744073709551615,"space":200}}}}"#
+    )
+}
+
+#[tokio::test]
+async fn a_negative_lockup_timestamp_does_not_break_the_pool() {
+    // Solana's UnixTimestamp is i64 and the runtime does not require it to be
+    // positive. Declaring it u64 meant one account with a negative lockup failed
+    // to deserialize — and because the whole account array decodes at once, the
+    // ENTIRE pool returned ParseError.
+    //
+    // That is a cheap denial of service: anyone can create a 200-byte stake
+    // account naming a victim pool's authority as staker (keeping themselves as
+    // withdrawer, so the pool cannot touch it) with a negative lockup. It matches
+    // the offset-12 filter, and every fetch of that pool fails from then on.
+    for ts in ["0", "-1", "-62135596800"] {
+        let body = stake_account_json(ts);
+        let fake = spawn_fake_rpc(move |req| {
+            format!(r#"{{"jsonrpc":"2.0","id":{},"result":[{body}]}}"#, id_of(req))
+        });
+        let client = PoolsDataClient::builder()
+            .rate_limit(1000)
+            .retry_attempts(0)
+            .build(&fake.url)
+            .and_then(PoolsDataClient::from_config)
+            .expect("client");
+
+        let out = client
+            .fetch_pools(&["jito"])
+            .await
+            .unwrap_or_else(|e| panic!("lockup unixTimestamp {ts} broke the pool: {e}"));
+        let pool = out.get("jito").expect("pool present");
+        assert_eq!(pool.stake_accounts.len(), 1, "account dropped for ts {ts}");
+        assert_eq!(
+            pool.stake_accounts[0].lockup.unix_timestamp,
+            ts.parse::<i64>().unwrap(),
+            "lockup timestamp must round-trip with its sign"
+        );
+    }
+}
+
 #[tokio::test]
 async fn a_permanent_error_is_not_retried() {
     // The error type has always classified what is worth retrying, but the

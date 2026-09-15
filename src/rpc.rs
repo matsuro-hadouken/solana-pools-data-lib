@@ -137,8 +137,16 @@ struct RawStakeAuthorized {
 struct RawStakeLockup {
     custodian: String,
     epoch: u64,
+    // i64, not u64: Solana's UnixTimestamp is signed and the runtime does not
+    // require it to be positive. Typing it unsigned meant one account with a
+    // negative lockup failed to deserialize, and since the whole account array
+    // decodes at once, the ENTIRE pool returned ParseError. That was a cheap
+    // denial of service — anyone could create a 200-byte stake account naming a
+    // victim pool's authority as staker (keeping themselves as withdrawer, so
+    // the pool could never remove it) with a negative lockup, and every fetch of
+    // that pool would fail from then on.
     #[serde(rename = "unixTimestamp")]
-    unix_timestamp: u64,
+    unix_timestamp: i64,
 }
 
 /// Raw delegation info
@@ -349,8 +357,8 @@ impl RpcClient {
         let lockup = StakeLockup {
             custodian: raw.account.data.parsed.info.meta.lockup.custodian,
             epoch: raw.account.data.parsed.info.meta.lockup.epoch,
-            #[allow(clippy::cast_possible_wrap)] // Unix timestamps are typically positive and fit in i64
-            unix_timestamp: raw.account.data.parsed.info.meta.lockup.unix_timestamp as i64,
+            // No cast: the field is already i64, matching Solana's UnixTimestamp.
+            unix_timestamp: raw.account.data.parsed.info.meta.lockup.unix_timestamp,
         };
 
         let delegation = if let Some(stake_data) = raw.account.data.parsed.info.stake {
@@ -468,6 +476,18 @@ impl RpcClient {
             .send()
             .await?;
 
+        // Same classification as the fetch path: a 3xx means the configured URL
+        // is not canonical, which retrying never fixes. Leaving it as a retryable
+        // NetworkError here would have a caller consulting is_retryable() retry a
+        // permanent 308 that normal fetches correctly stop on.
+        if response.status().is_redirection() {
+            return Err(PoolsDataError::ConfigurationError {
+                message: format!(
+                    "RPC endpoint redirected ({}) during health check; configure the canonical URL",
+                    response.status()
+                ),
+            });
+        }
         if !response.status().is_success() {
             return Err(PoolsDataError::NetworkError {
                 message: format!("Health check failed: {}", response.status()),

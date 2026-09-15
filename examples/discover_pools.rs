@@ -60,6 +60,42 @@ fn endpoint_label(url: &str) -> String {
     }
 }
 
+/// Exclusive lock for the read-compute-write cycle, released on drop.
+///
+/// A whole run spends minutes in RPC between reading the registry and writing
+/// it. Without this, two runs both read the old file and the slower one renames
+/// its stale snapshot over the faster one's work.
+struct ExclusiveLock(String);
+
+impl ExclusiveLock {
+    fn acquire(path: &str) -> std::result::Result<Self, String> {
+        // create_new is atomic: exactly one process creates the file.
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+        {
+            Ok(mut f) => {
+                use std::io::Write;
+                let _ = writeln!(f, "{}", std::process::id());
+                Ok(Self(path.to_string()))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(format!(
+                "another generator run holds {path} (pid {}). If no run is active, \
+                 delete that file and retry.",
+                std::fs::read_to_string(path).unwrap_or_default().trim()
+            )),
+            Err(e) => Err(format!("cannot create {path}: {e}")),
+        }
+    }
+}
+
+impl Drop for ExclusiveLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), BoxErr> {
     // Every unrecognized or unparseable argument is fatal and names the token.
@@ -135,6 +171,12 @@ async fn main() -> Result<(), BoxErr> {
     // applied the strict gate to known and new pools alike, which is how an
     // 11-epoch-stale pool with 100 SOL cached and 0.5 SOL live got dropped and
     // then retired — the exact eviction the spec's asymmetry forbids.
+    // Hold an exclusive lock for the whole read-compute-write cycle. Re-reading
+    // before the rename narrows the window between check and write but cannot
+    // close it: a second run can still land in the microseconds between the
+    // comparison and the rename. create_new is atomic, so exactly one process
+    // wins. The guard removes it on every exit path, including `?`.
+    let _lock = ExclusiveLock::acquire(&format!("{out_path}.lock"))?;
     let existing = std::fs::read_to_string(out_path)?;
     let mut reg = parse_registry(&existing)?;
     // promote_derivable only moves entries between sections; it never adds or
@@ -203,6 +245,11 @@ async fn main() -> Result<(), BoxErr> {
     }
 
     // First run: moves the derivable entries out of MANUAL into GENERATED.
+    // Capture the generated population BEFORE promotion. promote_derivable moves
+    // MANUAL entries in, which inflates the denominator and dilutes the shrink
+    // percentage: 14 pools lost out of 261 is 5.36% and should abort, but if 20
+    // manual entries were promoted first it computes 14/281 = 4.98% and passes.
+    let generated_before_promotion = reg.generated.len();
     promote_derivable(&mut reg, &all_derived);
 
     // 3. Verification is per program cohort. A global "all empty" check would
@@ -262,7 +309,7 @@ async fn main() -> Result<(), BoxErr> {
     // program response aborts earlier, so this catches the partial case. Compare
     // against what the file held before, not against the candidate count, since
     // the point is the direction and size of the change to the committed set.
-    let before = reg.generated.len();
+    let before = generated_before_promotion;
     let after = updated.generated.len();
     // Measure what actually disappeared, not the net count. Net change conflates
     // two independent events — pools dropping out, and new pools crossing the

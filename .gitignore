@@ -8,3 +8,4 @@
 /legacy61.txt
 # generator temp files, if a run is interrupted between write and rename
 /src/*.tmp
+/src/*.lock
