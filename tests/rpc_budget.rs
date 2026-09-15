@@ -422,6 +422,46 @@ async fn a_negative_lockup_timestamp_does_not_break_the_pool() {
 }
 
 #[tokio::test]
+async fn optional_rpc_fields_do_not_break_the_pool_when_omitted() {
+    // Same failure shape as the warmupCooldownRate outage this repo already
+    // carries a regression test for (src/rpc.rs, "2026-08-03 pools-daemon"):
+    // the whole account array decodes in one pass, so a field that serde
+    // REQUIRES but the code never reads takes down every pool the moment a node
+    // stops emitting it. `rentEpoch` is deprecated upstream and the inner
+    // `data.space` duplicates the outer one, so neither is safe to require.
+    for drop_field in ["rentEpoch", "space-inner"] {
+        let full = stake_account_json("0");
+        let body = match drop_field {
+            // remove the top-level rentEpoch
+            "rentEpoch" => full.replace(r#","rentEpoch":18446744073709551615"#, ""),
+            // remove the space nested inside `data`, keeping the outer one
+            _ => full.replace(r#"},"space":200},"owner""#, r#"}},"owner""#),
+        };
+        assert_ne!(body, full, "fixture edit for {drop_field} did not apply");
+
+        let fake = spawn_fake_rpc(move |req| {
+            format!(r#"{{"jsonrpc":"2.0","id":{},"result":[{body}]}}"#, id_of(req))
+        });
+        let client = PoolsDataClient::builder()
+            .rate_limit(1000)
+            .retry_attempts(0)
+            .build(&fake.url)
+            .and_then(PoolsDataClient::from_config)
+            .expect("client");
+
+        let out = client
+            .fetch_pools(&["jito"])
+            .await
+            .unwrap_or_else(|e| panic!("omitting {drop_field} broke the whole pool: {e}"));
+        assert_eq!(
+            out.get("jito").expect("pool present").stake_accounts.len(),
+            1,
+            "account dropped when {drop_field} was absent"
+        );
+    }
+}
+
+#[tokio::test]
 async fn a_permanent_error_is_not_retried() {
     // The error type has always classified what is worth retrying, but the
     // verdict was only read AFTER the loop spent its whole budget. A

@@ -83,10 +83,16 @@ struct RawAccountData {
     executable: bool,
     #[allow(dead_code)] // Program owner, expected to be stake program
     owner: String,
-    #[serde(rename = "rentEpoch")]
+    // Never read, and deprecated upstream. Requiring it means the day a node
+    // stops emitting it, every pool fails at once — the whole account array
+    // decodes in a single pass. That is the warmupCooldownRate outage
+    // (2026-08-03) repeating with a different field name, so default it.
+    #[serde(rename = "rentEpoch", default)]
     #[allow(dead_code)] // Rent epoch information
     rent_epoch: u64,
-    #[allow(dead_code)] // Account space, always 200 for stake accounts
+    // Read by validate_stake_account, but defaulting is still safer than
+    // failing every pool: a missing value fails the 200-byte check on its own.
+    #[serde(default)]
     space: u64,
 }
 
@@ -96,6 +102,9 @@ struct RawParsedData {
     parsed: RawParsedInfo,
     #[allow(dead_code)] // Program type, expected to be "stake"
     program: String,
+    // Never read — it duplicates the outer account.space. Requiring a field
+    // nothing consumes is how one node-side change takes down every pool.
+    #[serde(default)]
     #[allow(dead_code)] // Data space, same as account space
     space: u64,
 }
@@ -121,8 +130,15 @@ struct RawStakeInfo {
 struct RawStakeMeta {
     authorized: RawStakeAuthorized,
     lockup: RawStakeLockup,
-    #[serde(rename = "rentExemptReserve")]
+    // Deprecated upstream (Meta::rent_exempt_reserve, since 3.0.1). It is carried
+    // through to StakeAccountInfo but never used in any statistic, so defaulting
+    // to "0" costs nothing and stops a node-side removal failing every pool.
+    #[serde(rename = "rentExemptReserve", default = "zero_string")]
     rent_exempt_reserve: String, // String because it comes as string from RPC
+}
+
+fn zero_string() -> String {
+    "0".to_string()
 }
 
 /// Raw stake authorization info
@@ -311,13 +327,20 @@ impl RpcClient {
             match Self::parse_stake_account(raw_account) {
                 Ok(stake_account) => stake_accounts.push(stake_account),
                 Err(e) => {
-                    // Skipping used to be a warn-and-continue. That makes the
-                    // pool succeed with understated stake, which even
-                    // fetch_pools_strict reports as Ok — the all-or-nothing
-                    // contract held across pools but not within one. A silently
-                    // wrong balance is worse than an absent row, and the
-                    // memcmp already restricts results to the stake program, so
-                    // an unparseable account here is genuinely anomalous.
+                    // Skipping used to be a warn-and-continue, which let a pool
+                    // succeed with understated stake — even under
+                    // fetch_pools_strict. A silently wrong balance is worse than
+                    // an absent row.
+                    //
+                    // In practice this arm is close to unreachable: every
+                    // remaining check (owner, executable, space, program type,
+                    // stake type, the three string->u64 parses) is satisfied by
+                    // definition for an account a getProgramAccounts query on
+                    // the stake program returned, and a live fetch of all 294
+                    // pools produced zero hits. The real within-pool guarantee
+                    // comes one step earlier, from decoding the whole array at
+                    // once. This is the backstop for a shape that slips past
+                    // that, not the primary defence.
                     log::error!("stake account {pubkey} failed to parse: {e}");
                     return Err(PoolsDataError::InvalidStakeData {
                         message: format!(
