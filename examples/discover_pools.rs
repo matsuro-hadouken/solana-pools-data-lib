@@ -121,6 +121,11 @@ async fn main() -> Result<(), BoxErr> {
     // connection would hang the generator forever instead of failing.
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(300))
+        // Same reason as the library client: reqwest follows up to 10 redirects
+        // by default, which would silently multiply every generator RPC. A 3xx
+        // here means the configured URL is not canonical, and the generator
+        // should say so rather than pay for it.
+        .redirect(reqwest::redirect::Policy::none())
         .build()?;
     let (epoch, slot) = get_epoch_and_slot(&http, &rpc_url).await?;
 
@@ -259,20 +264,26 @@ async fn main() -> Result<(), BoxErr> {
     // the point is the direction and size of the change to the committed set.
     let before = reg.generated.len();
     let after = updated.generated.len();
-    if before > 0 && after < before {
-        let shrink = (before - after) as f64 / before as f64 * 100.0;
+    // Measure what actually disappeared, not the net count. Net change conflates
+    // two independent events — pools dropping out, and new pools crossing the
+    // threshold — so a truncation removing 15 pools while 3 legitimately arrive
+    // nets -12 on a 262 baseline (4.6%) and slips under a 5% limit. The
+    // newly-retired set is precisely "previously-generated authorities that are
+    // no longer candidates" and cannot be masked by arrivals.
+    let retired: Vec<&str> = updated
+        .retired
+        .iter()
+        .filter(|e| !reg.retired.iter().any(|r| r.authority == e.authority))
+        .map(|e| e.name.as_str())
+        .collect();
+    if before > 0 && !retired.is_empty() {
+        let shrink = retired.len() as f64 / before as f64 * 100.0;
         if shrink > max_shrink_pct {
-            let retired: Vec<&str> = updated
-                .retired
-                .iter()
-                .filter(|e| !reg.retired.iter().any(|r| r.authority == e.authority))
-                .map(|e| e.name.as_str())
-                .collect();
             return Err(format!(
-                "ABORT: generated pools {before} -> {after} ({shrink:.1}% smaller), over the \
-                 {max_shrink_pct:.1}% limit. A truncated RPC response looks identical to pools \
-                 genuinely disappearing, so nothing was written. {} pools would have been \
-                 retired: {}{}. Re-run; if the shrink is real, pass \
+                "ABORT: {} of {before} generated pools would be retired in one run ({shrink:.1}%, \
+                 over the {max_shrink_pct:.1}% limit); the set would go {before} -> {after}. \
+                 A truncated RPC response looks identical to pools genuinely disappearing, so \
+                 nothing was written. Affected: {}{}. Re-run; if the loss is real, pass \
                  --max-shrink-pct {:.0} to accept it.",
                 retired.len(),
                 retired.iter().take(10).cloned().collect::<Vec<_>>().join(", "),
@@ -313,6 +324,23 @@ async fn main() -> Result<(), BoxErr> {
     // say) cannot write the same temp path and interleave. The rename itself is
     // atomic on POSIX within a filesystem, so an interrupted run leaves the old
     // registry intact rather than a half-written one.
+    // A full run spends minutes in RPC between reading the registry and writing
+    // it. In that window a developer can edit a MANUAL entry, or a second run
+    // can finish — and renaming our stale snapshot over the result would discard
+    // their work silently. The PID suffix stops two runs sharing a temp path; it
+    // does nothing about this. Re-read and compare before committing to it.
+    let current = std::fs::read_to_string(out_path)?;
+    if current != existing {
+        return Err(format!(
+            "ABORT: {out_path} changed while this run was fetching ({} -> {} bytes). Another \
+             generator run or a hand edit landed in the meantime, and writing now would discard \
+             it. Nothing was written; re-run.",
+            existing.len(),
+            current.len()
+        )
+        .into());
+    }
+
     let tmp = format!("{out_path}.{}.tmp", std::process::id());
     std::fs::write(&tmp, &spliced)?;
     std::fs::rename(&tmp, out_path)?;

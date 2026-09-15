@@ -236,6 +236,24 @@ impl RpcClient {
             .await?;
 
         // Check for HTTP errors
+        if response.status().is_redirection() {
+            // Redirects are not followed (see the client builder). A 3xx means
+            // the configured URL is not canonical, which no amount of retrying
+            // fixes — classify it as configuration so the retry loop stops at
+            // the first attempt instead of spending the whole budget per pool.
+            return Err(PoolsDataError::ConfigurationError {
+                message: format!(
+                    "RPC endpoint redirected ({}) to {:?}; configure the canonical URL directly. \
+                     Redirects are not followed because they multiply every request.",
+                    response.status(),
+                    response
+                        .headers()
+                        .get(reqwest::header::LOCATION)
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("<no Location header>")
+                ),
+            });
+        }
         if !response.status().is_success() {
             return Err(PoolsDataError::NetworkError {
                 message: format!("HTTP error: {}", response.status()),
@@ -285,8 +303,20 @@ impl RpcClient {
             match Self::parse_stake_account(raw_account) {
                 Ok(stake_account) => stake_accounts.push(stake_account),
                 Err(e) => {
-                    log::warn!("Failed to parse stake account {pubkey}: {e}");
-                    // Continue processing other accounts instead of failing completely
+                    // Skipping used to be a warn-and-continue. That makes the
+                    // pool succeed with understated stake, which even
+                    // fetch_pools_strict reports as Ok — the all-or-nothing
+                    // contract held across pools but not within one. A silently
+                    // wrong balance is worse than an absent row, and the
+                    // memcmp already restricts results to the stake program, so
+                    // an unparseable account here is genuinely anomalous.
+                    log::error!("stake account {pubkey} failed to parse: {e}");
+                    return Err(PoolsDataError::InvalidStakeData {
+                        message: format!(
+                            "stake account {pubkey} for authority {authority} did not parse ({e}); \
+                             refusing to report this pool with an understated balance"
+                        ),
+                    });
                 }
             }
         }

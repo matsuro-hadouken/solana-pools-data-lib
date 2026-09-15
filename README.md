@@ -104,8 +104,11 @@ that means a refresh can 429 most of its pools and still look successful — a w
 that treats "absent from the response" as "delete this row" would then wipe most of a
 table.
 
-For scheduled refreshes that write to a database, prefer the strict variants, which
-return `BatchOperationFailed { successful, failed }` and log each failure:
+For scheduled refreshes that write to a database, prefer the strict variants. They
+are all-or-nothing; which error you get depends on how the request failed — an
+unknown pool name gives `PoolNotFound` before any RPC call, a partial failure gives
+`BatchOperationFailed { successful, failed }` with each failure logged, and a total
+outage propagates the underlying network/RPC error:
 
 ```rust
 match client.fetch_all_pools_strict().await {

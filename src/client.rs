@@ -67,7 +67,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
-use tokio_retry::{strategy::ExponentialBackoff, Retry};
+use tokio_retry::{strategy::ExponentialBackoff, RetryIf};
 
 use crate::config::{ClientConfig, PoolsDataClientBuilder};
 use crate::error::{PoolError, PoolsDataError, Result};
@@ -197,13 +197,19 @@ impl PoolsDataClient {
     /// Fetch stake pool data for production use
     ///
     /// Returns data with static/redundant fields removed.
-    /// Use this method for production databases where storage size matters.
+    ///
+    /// **Lenient.** Succeeds when at least one requested pool is fetched, and
+    /// silently omits the rest: a name that is not in the registry is dropped
+    /// without comment, and a pool whose fetch fails is simply absent from the
+    /// returned map. For a scheduled refresh that writes to a database, prefer
+    /// [`Self::fetch_pools_strict`], which is all-or-nothing.
     ///
     /// # Errors
     ///
     /// Returns error if:
-    /// - Any requested pool is not found
-    /// - Network connection fails
+    /// - *None* of the requested pools are found (a mix of valid and unknown
+    ///   names succeeds, returning only the valid ones)
+    /// - Network connection fails for every pool
     /// - RPC endpoint returns invalid data
     pub async fn fetch_pools(
         &self,
@@ -221,11 +227,19 @@ impl PoolsDataClient {
         Ok(production_data)
     }
 
-    /// Fetch data for all available pools
+    /// Fetch data for all active pools
+    ///
+    /// **Lenient.** Succeeds when at least one pool is fetched, so a
+    /// rate-limited endpoint can 429 most of a refresh and still return `Ok`
+    /// with a fraction of the rows. Use [`Self::fetch_all_pools_strict`] when a
+    /// partial result is worse than no result.
+    ///
+    /// Retired pools are excluded; they remain resolvable by name via
+    /// [`get_pool_by_name`].
     ///
     /// # Errors
     ///
-    /// Returns error if any pool fails to fetch or if network issues occur.
+    /// Returns error only if *every* pool fails to fetch.
     pub async fn fetch_all_pools(&self) -> Result<HashMap<String, ProductionPoolData>> {
         let all_pools = get_active_pools();
         let pool_names: Vec<&str> = all_pools.iter().map(|p| p.name.as_str()).collect();
@@ -430,7 +444,16 @@ impl PoolsDataClient {
         let pool_name = pool_info.name.clone();
         let authority = pool_info.authority.clone();
 
-        let result = Retry::spawn(retry_strategy, || async {
+        // RetryIf, not Retry: the error type already classifies what is worth
+        // retrying, but that verdict was only consulted after the loop had
+        // finished spending its whole budget. A permanent failure — invalid
+        // params, a parse error, a misconfigured URL that now errors instead of
+        // redirecting — cost 1+retry_attempts requests per pool, which across
+        // 294 pools turns one deterministic mistake into hundreds of pointless
+        // requests against an endpoint that is usually already rate-limiting.
+        let result = RetryIf::spawn(
+            retry_strategy,
+            || async {
             // Every attempt takes a rate-limit permit, not just the first.
             // Awaiting the limiter once outside this closure let retries bypass
             // the configured rate entirely — so a struggling endpoint would be
@@ -440,10 +463,12 @@ impl PoolsDataClient {
             if let Some(limiter) = &rate_limiter {
                 limiter.until_ready().await;
             }
-            rpc_client
-                .fetch_stake_accounts_for_authority(&pool_info.authority)
-                .await
-        })
+                rpc_client
+                    .fetch_stake_accounts_for_authority(&pool_info.authority)
+                    .await
+            },
+            |e: &PoolsDataError| e.is_retryable(),
+        )
         .await;
 
         match result {

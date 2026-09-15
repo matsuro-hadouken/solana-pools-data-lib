@@ -94,7 +94,21 @@ impl PoolError {
 
     /// Determine if an error is retryable
     const fn is_retryable(error: &PoolsDataError) -> bool {
-        match error {
+        error.is_retryable()
+    }
+}
+
+impl PoolsDataError {
+    /// Whether retrying this error could plausibly succeed.
+    ///
+    /// The retry loop consults this before spending another attempt. Without it
+    /// a permanent failure — invalid params, a parse error, a misconfigured URL —
+    /// costs the full retry budget per pool, which across a 294-pool refresh
+    /// multiplies a deterministic failure into hundreds of pointless requests on
+    /// an endpoint that is often already rate-limiting.
+    #[must_use]
+    pub const fn is_retryable(&self) -> bool {
+        match self {
             // Retryable errors - temporary issues that might succeed on retry
             PoolsDataError::NetworkError { .. }
             | PoolsDataError::RateLimitExceeded { .. }

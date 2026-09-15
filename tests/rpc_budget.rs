@@ -376,3 +376,73 @@ async fn a_redirecting_endpoint_cannot_multiply_requests() {
         "redirects were followed and multiplied the per-pool request cost"
     );
 }
+
+#[tokio::test]
+async fn a_permanent_error_is_not_retried() {
+    // The error type has always classified what is worth retrying, but the
+    // verdict was only read AFTER the loop spent its whole budget. A
+    // deterministic failure (here invalid-params, -32602) therefore cost
+    // 1+retry_attempts requests per pool — across 294 pools that turns one
+    // permanent mistake into hundreds of pointless requests against an endpoint
+    // that is usually already rate-limiting.
+    let fake = spawn_fake_rpc(|req| {
+        format!(
+            r#"{{"jsonrpc":"2.0","id":{},"error":{{"code":-32602,"message":"invalid params"}}}}"#,
+            id_of(req)
+        )
+    });
+    let client = PoolsDataClient::builder()
+        .rate_limit(1000)
+        .retry_attempts(5)
+        .retry_base_delay(1)
+        .build(&fake.url)
+        .and_then(PoolsDataClient::from_config)
+        .expect("client");
+
+    let _ = client.fetch_pools(&["jito"]).await;
+
+    assert_eq!(
+        fake.hits.load(Ordering::SeqCst),
+        1,
+        "a non-retryable error must cost exactly one request despite retry_attempts(5)"
+    );
+}
+
+#[tokio::test]
+async fn a_redirect_is_not_retried_either() {
+    // A 3xx means the configured URL is not canonical. Retrying cannot fix that,
+    // so it is classified as configuration rather than network. Without this the
+    // no-redirect policy traded 11 followed hops for 6 retried failures.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().unwrap().port();
+    let hits = Arc::new(AtomicUsize::new(0));
+    let h = Arc::clone(&hits);
+
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut s) = stream else { continue };
+            let mut buf = [0u8; 8192];
+            let _ = s.read(&mut buf);
+            h.fetch_add(1, Ordering::SeqCst);
+            let resp = "HTTP/1.1 308 Permanent Redirect\r\nLocation: https://canonical.example/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            let _ = s.write_all(resp.as_bytes());
+            let _ = s.flush();
+        }
+    });
+
+    let client = PoolsDataClient::builder()
+        .rate_limit(1000)
+        .retry_attempts(5)
+        .retry_base_delay(1)
+        .build(&format!("http://127.0.0.1:{port}"))
+        .and_then(PoolsDataClient::from_config)
+        .expect("client");
+
+    let _ = client.fetch_pools(&["jito"]).await;
+
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        1,
+        "a redirect must not be retried; it is a configuration error, not a transient one"
+    );
+}

@@ -506,8 +506,13 @@ proxy returning only some accounts. Nothing distinguishes that from the pools
 genuinely disappearing, and the generator's response to a disappeared pool is to
 retire it. Only a wholly empty program response aborted.
 
-`--max-shrink-pct` (default **5**) aborts when the generated set shrinks by more
-than that fraction. The threshold was picked by simulating against real chain
+`--max-shrink-pct` (default **5**) aborts when more than that share of the
+generated set would be **retired in one run**. The metric is the newly-retired
+set, not the net count change: net change conflates pools dropping out with new
+pools crossing the threshold, so a truncation removing 15 pools while 3
+legitimately arrive nets -12 on a 262 baseline (4.6%) and slips under the limit.
+The newly-retired set is exactly "previously-generated authorities that are no
+longer candidates" and cannot be masked by arrivals. The threshold was picked by simulating against real chain
 state rather than chosen by feel. Baseline: 262 generated pools — SPL 86,
 SanctumSpl 135, SanctumMulti 41.
 
@@ -525,7 +530,7 @@ pessimistic epoch.
 
 **Truncation is not tiny.** Drop in generated count by scenario:
 
-| scenario | drop |
+| scenario | share retired |
 |---|---|
 | all programs return 99% | 1.5% |
 | all programs return 95% | 5.7% |
