@@ -191,6 +191,14 @@ struct RawDelegation {
     warmup_cooldown_rate: f64,
 }
 
+/// Ceiling for any single account balance or delegated amount.
+///
+/// Total SOL supply is roughly 6e8 SOL = 6e17 lamports; this is 1e18, an order
+/// of magnitude of headroom above anything that can exist while still being far
+/// below u64::MAX (1.8e19). Its purpose is to catch a response that is wrong,
+/// not to cap a pool that is merely large.
+const MAX_PLAUSIBLE_LAMPORTS: u64 = 1_000_000_000_000_000_000;
+
 fn default_warmup_cooldown_rate() -> f64 {
     0.25
 }
@@ -278,6 +286,22 @@ impl RpcClient {
                 ),
             });
         }
+        // 4xx is the client's fault and retrying cannot fix it: a bad API key
+        // (401/403), a wrong path (404), a malformed body (400). Classifying it
+        // as NetworkError made it retryable, so a deterministic permanent
+        // failure cost 1+retry_attempts requests per pool — the same
+        // amplification already closed for 3xx and RPC -32602. 429 is the
+        // exception: it is explicitly a "come back later".
+        if response.status().is_client_error()
+            && response.status() != reqwest::StatusCode::TOO_MANY_REQUESTS
+        {
+            return Err(PoolsDataError::ConfigurationError {
+                message: format!(
+                    "RPC endpoint returned {}; check the URL and credentials. Not retried.",
+                    response.status()
+                ),
+            });
+        }
         if !response.status().is_success() {
             return Err(PoolsDataError::NetworkError {
                 message: format!("HTTP error: {}", response.status()),
@@ -359,6 +383,23 @@ impl RpcClient {
     fn parse_stake_account(raw: RawStakeAccount) -> Result<StakeAccountInfo> {
         // Validate that this is actually a stake account
         Self::validate_stake_account(&raw)?;
+
+        // Reject balances that cannot exist before they reach any accumulator.
+        // The totals are u64 sums; a release build wraps silently, so an
+        // out-of-range value from a lying or buggy RPC would be returned as a
+        // successful pool with corrupted figures — measured: u64::MAX + 10 came
+        // back as total_lamports = 9, Ok. Total SOL supply is ~6e8 (6e17
+        // lamports), so anything past MAX_PLAUSIBLE_LAMPORTS is impossible on
+        // chain and means the response is wrong, not that the pool is enormous.
+        if raw.account.lamports > MAX_PLAUSIBLE_LAMPORTS {
+            return Err(PoolsDataError::InvalidStakeData {
+                message: format!(
+                    "stake account {} reports {} lamports, which exceeds the total SOL supply; \
+                     refusing to fold an impossible balance into pool totals",
+                    raw.pubkey, raw.account.lamports
+                ),
+            });
+        }
 
         let rent_exempt_reserve = raw
             .account
@@ -460,6 +501,18 @@ impl RpcClient {
                 .map_err(|e| PoolsDataError::InvalidStakeData {
                     message: format!("Invalid stake amount: {e}"),
                 })?;
+
+        // Same ceiling as account lamports: a delegated amount past the total
+        // SOL supply means the response is wrong, and these values are summed
+        // into u64 totals that wrap silently in release builds.
+        if stake > MAX_PLAUSIBLE_LAMPORTS {
+            return Err(PoolsDataError::InvalidStakeData {
+                message: format!(
+                    "delegation reports {stake} lamports staked, which exceeds the total SOL \
+                     supply; refusing to fold an impossible amount into pool totals"
+                ),
+            });
+        }
 
         let activation_epoch = raw
             .delegation

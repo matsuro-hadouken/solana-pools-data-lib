@@ -462,6 +462,39 @@ async fn optional_rpc_fields_do_not_break_the_pool_when_omitted() {
 }
 
 #[tokio::test]
+async fn impossible_balances_are_rejected_not_folded_into_totals() {
+    // The statistics accumulators are u64 sums. A release build wraps silently,
+    // so a lying or buggy RPC could return a successful pool carrying corrupted
+    // figures: measured, u64::MAX + 10 came back as total_lamports = 9 with
+    // Ok — which defeats fetch_pools_strict entirely, since strict guards
+    // against MISSING pools, not WRONG ones. Total SOL supply is ~6e17 lamports,
+    // so anything past the ceiling means the response is wrong.
+    let huge = stake_account_json("0").replace(
+        r#""lamports":31976057508114"#,
+        r#""lamports":18446744073709551615"#,
+    );
+    let fake = spawn_fake_rpc(move |req| {
+        format!(r#"{{"jsonrpc":"2.0","id":{},"result":[{huge}]}}"#, id_of(req))
+    });
+    let client = PoolsDataClient::builder()
+        .rate_limit(1000)
+        .retry_attempts(0)
+        .build(&fake.url)
+        .and_then(PoolsDataClient::from_config)
+        .expect("client");
+
+    let err = client
+        .fetch_pools(&["jito"])
+        .await
+        .expect_err("an impossible balance must not be reported as a successful pool");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("supply"),
+        "error should name the plausibility ceiling, got: {msg}"
+    );
+}
+
+#[tokio::test]
 async fn a_permanent_error_is_not_retried() {
     // The error type has always classified what is worth retrying, but the
     // verdict was only read AFTER the loop spent its whole budget. A

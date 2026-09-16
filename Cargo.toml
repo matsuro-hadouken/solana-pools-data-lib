@@ -53,3 +53,8 @@ tokio-test = "0.4"
 [[example]]
 name = "discover_pools"
 required-features = ["discover"]
+# Cargo defaults example targets to test = false, so the policy tests inside
+# this file (base64 decoder, the stale-recheck asymmetry, credential scrubbing
+# in endpoint_label, verify_cohort withholding) never ran under `cargo test`.
+# There is no CI, so `cargo test` is the only gate that exists.
+test = true

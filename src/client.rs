@@ -528,7 +528,11 @@ impl PoolsDataClient {
                                 accounts: Vec::new(),
                             });
 
-                    entry.total_delegated += delegation.stake;
+                    // saturating, not `+=`: release builds wrap silently, so an
+                    // out-of-range value from a lying or buggy RPC would return
+                    // Ok with corrupted totals. Saturating pins the value at the
+                    // ceiling instead, and the overflow is reported below.
+                    entry.total_delegated = entry.total_delegated.saturating_add(delegation.stake);
                     entry.account_count += 1;
                     entry.accounts.push(account.pubkey.clone());
                 }
@@ -555,7 +559,7 @@ impl PoolsDataClient {
         // Without current_epoch, we can't properly detect activating state
         // This is a simplified version - use epoch-aware calculation when possible
         for account in stake_accounts {
-            total_lamports += account.lamports;
+            total_lamports = total_lamports.saturating_add(account.lamports);
             if let Some(delegation) = &account.delegation {
                 total_accounts += 1;
                 validator_set.insert(&delegation.voter);
@@ -563,11 +567,12 @@ impl PoolsDataClient {
                 if delegation.deactivation_epoch == u64::MAX {
                     // Assume active if not deactivating (can't detect activating without epoch)
                     active_accounts += 1;
-                    active_stake_lamports += delegation.stake;
+                    active_stake_lamports = active_stake_lamports.saturating_add(delegation.stake);
                 } else {
                     // Treat all non-active as deactivating (simplified)
                     deactivating_accounts += 1;
-                    deactivating_stake_lamports += delegation.stake;
+                    deactivating_stake_lamports =
+                        deactivating_stake_lamports.saturating_add(delegation.stake);
                 }
             }
         }
