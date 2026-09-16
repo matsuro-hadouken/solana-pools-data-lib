@@ -451,7 +451,16 @@ where
             }
         }
     }
-    if fresh > 0 && empty.len() == fresh {
+    // Require a meaningful cohort before concluding the derivation is broken.
+    // At 294 pools the steady state is one or two new pools per epoch, so
+    // `empty.len() == fresh` is trivially true whenever that single new pool
+    // reads empty twice — which a lagging node or a proxy returning empty
+    // arrays does routinely. That aborted the entire run, discarded the other
+    // two programs' work, and blamed "broken derivation" for what is really one
+    // quiet pool. The withhold path below already handles that case safely and
+    // reversibly; the abort is only for the systemic signal.
+    const MIN_COHORT_FOR_ABORT: usize = 3;
+    if fresh >= MIN_COHORT_FOR_ABORT && empty.len() == fresh {
         return Err(format!(
             "ABORT: all {fresh} new authorities under {program} returned no stake accounts; \
              derivation for this program looks broken"
@@ -913,15 +922,47 @@ mod tests {
         // written. Existing entries do not count towards it — they are only
         // annotated — or a program whose new pools are all quiet could never
         // abort behind a registry full of live ones.
+        // The cohort must also be big enough to be a signal. At 294 registered
+        // pools the steady state is one or two new ones per epoch, so aborting
+        // whenever "every new pool is empty" fires on a single quiet pool —
+        // which a lagging node produces routinely. Three is the floor.
         let count = |_: String| std::future::ready(Ok(0usize));
         let known: HashSet<String> = ["Known".to_string()].into_iter().collect();
-        let mut cohort = vec![cand("Known"), cand("NewA"), cand("NewB")];
+        let mut cohort = vec![
+            cand("Known"),
+            cand("NewA"),
+            cand("NewB"),
+            cand("NewC"),
+        ];
 
         let err = verify_cohort(&mut cohort, &known, "SPoo1", Duration::ZERO, count)
             .await
             .unwrap_err()
             .to_string();
-        assert!(err.contains("ABORT: all 2 new authorities"), "got: {err}");
+        assert!(err.contains("ABORT: all 3 new authorities"), "got: {err}");
         assert!(err.contains("SPoo1"), "the abort must name the program, got: {err}");
+    }
+
+    #[tokio::test]
+    async fn a_single_quiet_new_pool_is_withheld_not_treated_as_broken_derivation() {
+        // The degenerate case of the check above: one new pool that reads empty
+        // twice is a quiet pool, not evidence the whole program's derivation
+        // broke. Withholding it is reversible and keeps the other programs'
+        // work; aborting the run is neither.
+        let count = |_: String| std::future::ready(Ok(0usize));
+        let known: HashSet<String> = ["Known".to_string()].into_iter().collect();
+        let mut cohort = vec![cand("Known"), cand("NewA")];
+
+        verify_cohort(&mut cohort, &known, "SPoo1", Duration::ZERO, count)
+            .await
+            .expect("one quiet new pool must not abort the run");
+        assert!(
+            !cohort.iter().any(|c| c.authority == "NewA"),
+            "the quiet new authority must be withheld from the output"
+        );
+        assert!(
+            cohort.iter().any(|c| c.authority == "Known"),
+            "an existing authority is annotated, never withheld"
+        );
     }
 }

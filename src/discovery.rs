@@ -923,10 +923,32 @@ mod tests {
         // The parser and the file ship together; a marker-matching change that
         // silently drops a section would be invisible in every synthetic
         // fixture above. 294 names, all frozen public API.
+        // Ranges, not exact counts. Exact pins would red-build CI on the first
+        // real retirement and on every new pool crossing --min-sol — routine
+        // events this design explicitly supports. What must not happen is a
+        // section silently emptying, which is what a marker-matching regression
+        // looks like, so each bound is a floor rather than an equality.
         let r = parse_registry(include_str!("pools.rs")).unwrap();
-        assert_eq!(r.manual.len(), 33, "MANUAL count moved");
-        assert_eq!(r.generated.len(), 261, "GENERATED count moved");
-        assert_eq!(r.retired.len(), 0, "RETIRED count moved");
+        assert!(r.manual.len() >= 30, "MANUAL collapsed to {}", r.manual.len());
+        assert!(
+            r.generated.len() >= 200,
+            "GENERATED collapsed to {}",
+            r.generated.len()
+        );
+        assert!(
+            r.manual.len() + r.generated.len() + r.retired.len() >= 290,
+            "registry lost entries: {} total",
+            r.manual.len() + r.generated.len() + r.retired.len()
+        );
+        // A retired entry must never also be active — the one invariant that
+        // cannot be expressed as a count.
+        for e in &r.retired {
+            assert!(
+                !r.generated.iter().chain(&r.manual).any(|a| a.authority == e.authority),
+                "{} is both retired and active",
+                e.name
+            );
+        }
     }
 
     #[test]

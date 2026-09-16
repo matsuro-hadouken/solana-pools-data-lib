@@ -90,10 +90,15 @@ struct RawAccountData {
     #[serde(rename = "rentEpoch", default)]
     #[allow(dead_code)] // Rent epoch information
     rent_epoch: u64,
-    // Read by validate_stake_account, but defaulting is still safer than
-    // failing every pool: a missing value fails the 200-byte check on its own.
+    // Defaults to None rather than 0. A 0 default did NOT achieve what an
+    // earlier comment here claimed: it still failed `space != 200`, so every
+    // pool still failed — just as a non-retryable InvalidStakeData blaming the
+    // on-chain account, instead of a retryable ParseError. Absent and wrong are
+    // different things, so model them differently: an omitted field skips the
+    // size check (the memcmp already restricts results to the stake program),
+    // while a present-but-wrong value still fails.
     #[serde(default)]
-    space: u64,
+    space: Option<u64>,
 }
 
 /// Parsed stake account data
@@ -458,11 +463,11 @@ impl RpcClient {
         }
 
         // Validate account space (stake accounts are always 200 bytes)
-        if raw.account.space != 200 {
+        if raw.account.space.is_some_and(|s| s != 200) {
             return Err(PoolsDataError::InvalidStakeData {
                 message: format!(
                     "Invalid stake account space: {} (expected 200)",
-                    raw.account.space
+                    raw.account.space.unwrap_or_default()
                 ),
             });
         }
