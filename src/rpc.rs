@@ -79,24 +79,18 @@ struct RawStakeAccount {
 struct RawAccountData {
     lamports: u64,
     data: RawParsedData,
-    #[allow(dead_code)] // Account metadata, available for future validation
+    // executable and owner are read by validate_stake_account and are
+    // non-optional upstream, so they stay required.
     executable: bool,
-    #[allow(dead_code)] // Program owner, expected to be stake program
     owner: String,
-    // Never read, and deprecated upstream. Requiring it means the day a node
-    // stops emitting it, every pool fails at once — the whole account array
-    // decodes in a single pass. That is the warmupCooldownRate outage
-    // (2026-08-03) repeating with a different field name, so default it.
-    #[serde(rename = "rentEpoch", default)]
-    #[allow(dead_code)] // Rent epoch information
-    rent_epoch: u64,
-    // Defaults to None rather than 0. A 0 default did NOT achieve what an
-    // earlier comment here claimed: it still failed `space != 200`, so every
-    // pool still failed — just as a non-retryable InvalidStakeData blaming the
-    // on-chain account, instead of a retryable ParseError. Absent and wrong are
-    // different things, so model them differently: an omitted field skips the
-    // size check (the memcmp already restricts results to the stake program),
-    // while a present-but-wrong value still fails.
+    // rentEpoch is not declared above: nothing reads it, and serde ignores
+    // undeclared fields. Requiring a field with no read site means one upstream
+    // rename fails the whole getProgramAccounts response, since the array
+    // decodes in a single call.
+    //
+    // Option<u64> like agave's UiAccount.space, where null is legal. Absent and
+    // wrong are different: an omitted value skips the size check, a present but
+    // wrong one still fails.
     #[serde(default)]
     space: Option<u64>,
 }
@@ -105,21 +99,18 @@ struct RawAccountData {
 #[derive(Debug, Deserialize)]
 struct RawParsedData {
     parsed: RawParsedInfo,
-    #[allow(dead_code)] // Program type, expected to be "stake"
+    // Read by validate_stake_account.
     program: String,
-    // Never read — it duplicates the outer account.space. Requiring a field
-    // nothing consumes is how one node-side change takes down every pool.
-    #[serde(default)]
-    #[allow(dead_code)] // Data space, same as account space
-    space: u64,
+    // data.space is not declared: it duplicates the outer account.space and has
+    // no read site.
 }
 
 /// Parsed stake account info
 #[derive(Debug, Deserialize)]
 struct RawParsedInfo {
     info: RawStakeInfo,
+    // Read by validate_stake_account.
     #[serde(rename = "type")]
-    #[allow(dead_code)] // Stake type, expected to be "delegated"
     stake_type: String,
 }
 
@@ -707,4 +698,91 @@ mod tests {
 
     // Note: Integration tests that require actual RPC calls should be in a separate file
     // and marked with #[ignore] or run only in CI with real endpoints
+}
+
+#[cfg(test)]
+mod deser_fragility {
+    use super::*;
+    use serde_json::Value;
+
+    /// 221 real accounts, captured 2026-09-16 from getProgramAccounts filtered on
+    /// delegation.voter (offset 124) for QUANT7qKUEW4PS4eP9jq4K35rDHpgWkWcgjbW1CwnGJ.
+    const FIXTURE: &str =
+        include_str!("../tests/fixtures/stake_accounts_quant_2026-09-16.json");
+
+    fn parse(v: &Value) -> Result<usize> {
+        let text = v.to_string();
+        let resp: RpcResponse<Vec<RawStakeAccount>> = serde_json::from_str(&text)
+            .map_err(|e| PoolsDataError::ParseError {
+                message: e.to_string(),
+            })?;
+        Ok(resp.result.map_or(0, |r| r.len()))
+    }
+
+    fn fixture() -> Value {
+        serde_json::from_str(FIXTURE).expect("fixture is valid json")
+    }
+
+    /// One record that fails to deserialize loses every record in the response,
+    /// because the array decodes in a single serde_json::from_str call. Each
+    /// mutation below is a shape agave can legally emit; before the fix each one
+    /// took all 221 accounts with it.
+    #[test]
+    fn one_odd_account_does_not_lose_the_whole_response() {
+        let baseline = parse(&fixture()).expect("unmutated fixture parses");
+        assert_eq!(baseline, 221, "fixture should hold 221 accounts");
+
+        // Negative lockup: UnixTimestamp is i64 upstream and the runtime does not
+        // require it to be positive. Anyone can Initialize an account naming this
+        // pool's authority as staker and set one.
+        let mut v = fixture();
+        v["result"][0]["account"]["data"]["parsed"]["info"]["meta"]["lockup"]["unixTimestamp"] =
+            Value::from(-1);
+        assert_eq!(parse(&v).expect("negative lockup must parse"), 221);
+
+        // rentEpoch removed: not declared, so serde ignores it.
+        let mut v = fixture();
+        v["result"][0]["account"]
+            .as_object_mut()
+            .unwrap()
+            .remove("rentEpoch");
+        assert_eq!(parse(&v).expect("absent rentEpoch must parse"), 221);
+
+        // space null: legal in agave's UiAccount.
+        let mut v = fixture();
+        v["result"][0]["account"]["space"] = Value::Null;
+        assert_eq!(parse(&v).expect("null space must parse"), 221);
+
+        // space removed entirely.
+        let mut v = fixture();
+        v["result"][0]["account"]
+            .as_object_mut()
+            .unwrap()
+            .remove("space");
+        assert_eq!(parse(&v).expect("absent space must parse"), 221);
+
+        // warmupCooldownRate removed: agave dropped it, which caused the
+        // 2026-08-03 outage this pattern already produced here once.
+        let mut v = fixture();
+        v["result"][0]["account"]["data"]["parsed"]["info"]["stake"]["delegation"]
+            .as_object_mut()
+            .unwrap()
+            .remove("warmupCooldownRate");
+        assert_eq!(parse(&v).expect("absent warmupCooldownRate must parse"), 221);
+    }
+
+    /// A present but wrong size still fails, so making space optional did not
+    /// weaken the check it feeds.
+    #[test]
+    fn a_wrong_space_value_still_fails_validation() {
+        let v = fixture();
+        let text = v.to_string();
+        let resp: RpcResponse<Vec<RawStakeAccount>> =
+            serde_json::from_str(&text).expect("parses");
+        let mut accounts = resp.result.expect("has result");
+        accounts[0].account.space = Some(199);
+        assert!(RpcClient::validate_stake_account(&accounts[0]).is_err());
+        accounts[0].account.space = None;
+        assert!(RpcClient::validate_stake_account(&accounts[0]).is_ok());
+    }
 }
