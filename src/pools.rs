@@ -2,7 +2,7 @@
 //!
 //! This module contains the embedded list of known stake pool authorities
 //! and provides utilities for working with pool information.
-//! Provenance: https://api.mainnet-beta.solana.com slot 447394341 epoch 1035, --min-sol 1, sanctum-lst-list d0beb503dca1d1c6380386da47a79a259324f436b0d6a8e65dcbbc5dcd7ad74b, 238 pools
+//! Provenance: https://api.mainnet-beta.solana.com slot 447659744 epoch 1036, --min-sol 1, --unnamed-min-sol 5000, sanctum-lst-list d0beb503dca1d1c6380386da47a79a259324f436b0d6a8e65dcbbc5dcd7ad74b, 238 pools
 
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -69,6 +69,11 @@ impl PoolInfo {
 //     get_active_pools() and fetch_all_pools(). Its name and note survive, so no
 //     API key breaks, but a hand-added pool under the threshold will not stay in
 //     the active set.
+//   * A pool that no upstream source names is WITHHELD rather than given a
+//     placeholder, unless it holds at least --unnamed-min-sol. A withheld pool
+//     is not retired: it was never in the registry, and it appears the moment it
+//     is named or grows. A pool already here is never withheld, whatever
+//     upstream does, because its name is already frozen.
 //   * A pool name, once emitted, is frozen forever — it is a public API key.
 //     Identity is the authority pubkey; the name is only a label.
 // ===========================================================================

@@ -91,7 +91,12 @@ Manual tuning:
 294 Solana stake pools: auto-discovered SPL-family stake pools plus a hand-maintained
 list of custodial and non-SPL stakers. Regenerate with:
 
-`cargo run --features discover --example discover_pools -- --min-sol 1`
+`cargo run --features discover --example discover_pools -- --min-sol 1 --unnamed-min-sol 5000`
+
+`--min-sol` sets the size floor for inclusion. `--unnamed-min-sol` (default 10000)
+withholds a pool that no upstream source names, rather than minting a permanent
+`unnamed_*` API key for it; such a pool appears automatically once named or once
+it crosses that size.
 
 List: `PoolsDataClient::list_available_pools()`
 

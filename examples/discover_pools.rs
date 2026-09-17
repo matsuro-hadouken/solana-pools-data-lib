@@ -329,6 +329,15 @@ async fn main() -> Result<(), BoxErr> {
             if nameable {
                 return true;
             }
+            // Never withhold a pool already in the registry. It has a frozen
+            // name, so withholding cannot prevent a bad one; it only removes the
+            // pool from candidates, and assign_names retires any known generated
+            // authority that is missing from candidates. A transient failure of
+            // one naming source would therefore retire a live pool, and at one
+            // entry in 238 the loss sits well under the 5% shrink guard.
+            if known.contains(&c.authority) {
+                return true;
+            }
             let sol = sol_by_authority.get(&c.authority).copied().unwrap_or(0.0);
             if sol >= unnamed_min_sol {
                 return true;
@@ -398,7 +407,8 @@ async fn main() -> Result<(), BoxErr> {
 
     // 4. Assign names, render, write atomically.
     let provenance = format!(
-        "{} slot {slot} epoch {epoch}, --min-sol {min_sol}, sanctum-lst-list {}, {} pools",
+        "{} slot {slot} epoch {epoch}, --min-sol {min_sol}, \
+         --unnamed-min-sol {unnamed_min_sol}, sanctum-lst-list {}, {} pools",
         endpoint_label(&rpc_url),
         sanctum_rev.as_deref().unwrap_or("revision unknown"),
         candidates.len()
@@ -841,7 +851,7 @@ async fn live_stake_sol(http: &reqwest::Client, url: &str, authority: &str) -> R
 /// must never abort a run.
 async fn fetch_metaplex_names(
     http: &reqwest::Client,
-    rpc: &str,
+    rpc_url: &str,
     mints: &[String],
 ) -> HashMap<String, String> {
     let mpl = match Pubkey::from_str(MPL_TOKEN_METADATA) {
@@ -860,17 +870,39 @@ async fn fetch_metaplex_names(
         }
     }
 
-    let keys: Vec<String> = pda_to_mint.keys().cloned().collect();
+    // Sorted, not HashMap order: which mints share a chunk must not vary between
+    // runs on identical chain state, or a failing chunk names a different subset
+    // each time.
+    let mut keys: Vec<String> = pda_to_mint.keys().cloned().collect();
+    keys.sort();
     let mut out = HashMap::new();
+    let mut failed_chunks = 0usize;
     // getMultipleAccounts caps at 100 keys per call.
     for chunk in keys.chunks(100) {
-        let body = json!({
-            "jsonrpc": "2.0", "id": 1, "method": "getMultipleAccounts",
-            "params": [chunk, {"encoding": "base64"}]
-        });
-        let Ok(resp) = http.post(rpc).json(&body).send().await else { continue };
-        let Ok(v) = resp.json::<Value>().await else { continue };
-        let Some(values) = v["result"]["value"].as_array() else { continue };
+        // Through rpc(), not a raw post: that helper paces requests, backs off on
+        // 429 and 5xx, and treats a JSON-RPC error object as fatal. A raw post
+        // saw none of it, and mainnet returns `{"error":{...}}` with HTTP 200,
+        // so a whole chunk vanished leaving only a lower count in the log.
+        let v = match rpc(
+            http,
+            rpc_url,
+            "getMultipleAccounts",
+            json!([chunk, {"encoding": "base64"}]),
+        )
+        .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("metaplex: chunk of {} mints failed: {e}", chunk.len());
+                failed_chunks += 1;
+                continue;
+            }
+        };
+        let Some(values) = v["value"].as_array() else {
+            eprintln!("metaplex: chunk of {} mints returned no value array", chunk.len());
+            failed_chunks += 1;
+            continue;
+        };
         for (key, val) in chunk.iter().zip(values) {
             let Some(encoded) = val["data"][0].as_str() else { continue };
             let Ok(raw) = b64(encoded) else { continue };
@@ -881,9 +913,14 @@ async fn fetch_metaplex_names(
         }
     }
     eprintln!(
-        "metaplex: named {} of {} mints the sanctum list did not cover",
+        "metaplex: named {} of {} mints the sanctum list did not cover{}",
         out.len(),
-        mints.len()
+        mints.len(),
+        if failed_chunks > 0 {
+            format!(" ({failed_chunks} chunk(s) failed; those pools stay unnamed)")
+        } else {
+            String::new()
+        }
     );
     out
 }

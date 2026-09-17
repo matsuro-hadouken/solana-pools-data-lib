@@ -193,7 +193,7 @@ struct RawDelegation {
 /// of magnitude of headroom above anything that can exist while still being far
 /// below u64::MAX (1.8e19). Its purpose is to catch a response that is wrong,
 /// not to cap a pool that is merely large.
-const MAX_PLAUSIBLE_LAMPORTS: u64 = 1_000_000_000_000_000_000;
+pub(crate) const MAX_PLAUSIBLE_LAMPORTS: u64 = 1_000_000_000_000_000_000;
 
 fn default_warmup_cooldown_rate() -> f64 {
     0.25

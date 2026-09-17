@@ -487,6 +487,26 @@ impl PoolsDataClient {
                     Self::calculate_validator_distribution(&stake_accounts);
                 let statistics = Self::calculate_pool_statistics(&stake_accounts);
 
+                // The per-record ceiling in rpc.rs bounds one account; it does
+                // not bound their sum. Enough individually plausible records
+                // still overflow, and the accumulators saturate rather than
+                // wrap, so the pool would be reported as successful carrying a
+                // fabricated total. No single pool can hold more than the supply.
+                if statistics.total_lamports > crate::rpc::MAX_PLAUSIBLE_LAMPORTS {
+                    return Err(PoolError::new(
+                        pool_name,
+                        authority,
+                        PoolsDataError::InvalidStakeData {
+                            message: format!(
+                                "pool totals {} lamports across {} accounts, above the total SOL \
+                                 supply; refusing to report a fabricated aggregate",
+                                statistics.total_lamports, statistics.total_accounts
+                            ),
+                        },
+                        0,
+                    ));
+                }
+
                 Ok(PoolData {
                     pool_name: pool_info.name,
                     authority: pool_info.authority,

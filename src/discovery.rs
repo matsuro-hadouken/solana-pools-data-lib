@@ -1195,6 +1195,33 @@ mod tests {
     }
 
     #[test]
+    fn a_known_pool_is_never_retired_merely_because_a_naming_source_failed() {
+        // The withhold gate skips pools nothing names. A pool already in the
+        // registry must be exempt: it has a frozen name, so withholding cannot
+        // prevent a bad one, and assign_names retires any known generated
+        // authority missing from candidates. A transient Metaplex failure would
+        // otherwise retire a live pool, and one entry in 238 sits far under the
+        // 5% shrink guard, so nothing would stop it.
+        //
+        // This asserts the property at the assign_names layer: a known authority
+        // present in candidates keeps its name and stays generated, even with no
+        // upstream name at all.
+        let mut reg = Registry::default();
+        reg.generated.push(Entry {
+            name: "theta".into(),
+            authority: "A1".into(),
+            note: None,
+        });
+
+        let nameless = cand("A1", "PoolAddr12345", None);
+        let out = assign_names(&reg, &[nameless]);
+
+        assert_eq!(out.generated.len(), 1, "known pool must stay generated");
+        assert_eq!(out.generated[0].name, "theta", "frozen name must survive");
+        assert!(out.retired.is_empty(), "a named pool must not be retired");
+    }
+
+    #[test]
     fn repeated_verify_runs_do_not_accumulate_the_empty_note() {
         // EMPTY_NOTE is deliberately NOT managed, so merge_note does not strip it
         // from the previous note — that is what lets it survive a run made
