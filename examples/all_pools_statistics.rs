@@ -8,13 +8,14 @@ async fn fetch_current_epoch(rpc_url: &str) -> solana_pools_data_lib::Result<u64
         "method": "getEpochInfo",
         "params": []
     });
-    let resp = client.post(rpc_url)
-        .json(&body)
-        .send()
-        .await?;
+    let resp = client.post(rpc_url).json(&body).send().await?;
     let resp_json: serde_json::Value = resp.json().await?;
-    let epoch = resp_json["result"]["epoch"].as_u64()
-        .ok_or_else(|| PoolsDataError::ParseError { message: "No epoch in response".to_string() })?;
+    let epoch =
+        resp_json["result"]["epoch"]
+            .as_u64()
+            .ok_or_else(|| PoolsDataError::ParseError {
+                message: "No epoch in response".to_string(),
+            })?;
     Ok(epoch)
 }
 
@@ -37,19 +38,52 @@ async fn main() -> solana_pools_data_lib::Result<()> {
         println!("Pool: {}", pool_name);
         println!("  Total stake accounts: {}", summary.total_accounts);
         println!("  Activating accounts: {}", summary.activating_accounts);
-        println!("    Activating stake (lamports): {}", summary.activating_stake_lamports);
-        println!("    Activating stake (SOL): {:.2}", summary.activating_stake_lamports as f64 / 1_000_000_000.0);
+        println!(
+            "    Activating stake (lamports): {}",
+            summary.activating_stake_lamports
+        );
+        println!(
+            "    Activating stake (SOL): {:.2}",
+            summary.activating_stake_lamports as f64 / 1_000_000_000.0
+        );
         println!("  Active accounts: {}", summary.active_accounts);
-        println!("    Active stake (lamports): {}", summary.active_stake_lamports);
-        println!("    Active stake (SOL): {:.2}", summary.active_stake_lamports as f64 / 1_000_000_000.0);
+        println!(
+            "    Active stake (lamports): {}",
+            summary.active_stake_lamports
+        );
+        println!(
+            "    Active stake (SOL): {:.2}",
+            summary.active_stake_lamports as f64 / 1_000_000_000.0
+        );
         println!("  Deactivating accounts: {}", summary.deactivating_accounts);
-        println!("    Deactivating stake (lamports): {}", summary.deactivating_stake_lamports);
-        println!("    Deactivating stake (SOL): {:.2}", summary.deactivating_stake_lamports as f64 / 1_000_000_000.0);
-        println!("  Fully deactivated accounts: {}", summary.deactivated_accounts);
-        println!("    Fully deactivated stake (lamports): {}", summary.deactivated_stake_lamports);
-        println!("    Fully deactivated stake (SOL): {:.2}", summary.deactivated_stake_lamports as f64 / 1_000_000_000.0);
-        println!("  Total lamports in all stake accounts: {}", summary.total_lamports);
-        println!("  Total lamports (SOL): {:.2}", summary.total_lamports as f64 / 1_000_000_000.0);
+        println!(
+            "    Deactivating stake (lamports): {}",
+            summary.deactivating_stake_lamports
+        );
+        println!(
+            "    Deactivating stake (SOL): {:.2}",
+            summary.deactivating_stake_lamports as f64 / 1_000_000_000.0
+        );
+        println!(
+            "  Fully deactivated accounts: {}",
+            summary.deactivated_accounts
+        );
+        println!(
+            "    Fully deactivated stake (lamports): {}",
+            summary.deactivated_stake_lamports
+        );
+        println!(
+            "    Fully deactivated stake (SOL): {:.2}",
+            summary.deactivated_stake_lamports as f64 / 1_000_000_000.0
+        );
+        println!(
+            "  Total lamports in all stake accounts: {}",
+            summary.total_lamports
+        );
+        println!(
+            "  Total lamports (SOL): {:.2}",
+            summary.total_lamports as f64 / 1_000_000_000.0
+        );
         println!("---");
     }
     Ok(())

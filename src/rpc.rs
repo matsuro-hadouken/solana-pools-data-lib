@@ -79,33 +79,38 @@ struct RawStakeAccount {
 struct RawAccountData {
     lamports: u64,
     data: RawParsedData,
-    #[allow(dead_code)] // Account metadata, available for future validation
+    // executable and owner are read by validate_stake_account and are
+    // non-optional upstream, so they stay required.
     executable: bool,
-    #[allow(dead_code)] // Program owner, expected to be stake program
     owner: String,
-    #[serde(rename = "rentEpoch")]
-    #[allow(dead_code)] // Rent epoch information
-    rent_epoch: u64,
-    #[allow(dead_code)] // Account space, always 200 for stake accounts
-    space: u64,
+    // rentEpoch is not declared above: nothing reads it, and serde ignores
+    // undeclared fields. Requiring a field with no read site means one upstream
+    // rename fails the whole getProgramAccounts response, since the array
+    // decodes in a single call.
+    //
+    // Option<u64> like agave's UiAccount.space, where null is legal. Absent and
+    // wrong are different: an omitted value skips the size check, a present but
+    // wrong one still fails.
+    #[serde(default)]
+    space: Option<u64>,
 }
 
 /// Parsed stake account data
 #[derive(Debug, Deserialize)]
 struct RawParsedData {
     parsed: RawParsedInfo,
-    #[allow(dead_code)] // Program type, expected to be "stake"
+    // Read by validate_stake_account.
     program: String,
-    #[allow(dead_code)] // Data space, same as account space
-    space: u64,
+    // data.space is not declared: it duplicates the outer account.space and has
+    // no read site.
 }
 
 /// Parsed stake account info
 #[derive(Debug, Deserialize)]
 struct RawParsedInfo {
     info: RawStakeInfo,
+    // Read by validate_stake_account.
     #[serde(rename = "type")]
-    #[allow(dead_code)] // Stake type, expected to be "delegated"
     stake_type: String,
 }
 
@@ -121,8 +126,15 @@ struct RawStakeInfo {
 struct RawStakeMeta {
     authorized: RawStakeAuthorized,
     lockup: RawStakeLockup,
-    #[serde(rename = "rentExemptReserve")]
+    // Deprecated upstream (Meta::rent_exempt_reserve, since 3.0.1). It is carried
+    // through to StakeAccountInfo but never used in any statistic, so defaulting
+    // to "0" costs nothing and stops a node-side removal failing every pool.
+    #[serde(rename = "rentExemptReserve", default = "zero_string")]
     rent_exempt_reserve: String, // String because it comes as string from RPC
+}
+
+fn zero_string() -> String {
+    "0".to_string()
 }
 
 /// Raw stake authorization info
@@ -137,8 +149,16 @@ struct RawStakeAuthorized {
 struct RawStakeLockup {
     custodian: String,
     epoch: u64,
+    // i64, not u64: Solana's UnixTimestamp is signed and the runtime does not
+    // require it to be positive. Typing it unsigned meant one account with a
+    // negative lockup failed to deserialize, and since the whole account array
+    // decodes at once, the ENTIRE pool returned ParseError. That was a cheap
+    // denial of service — anyone could create a 200-byte stake account naming a
+    // victim pool's authority as staker (keeping themselves as withdrawer, so
+    // the pool could never remove it) with a negative lockup, and every fetch of
+    // that pool would fail from then on.
     #[serde(rename = "unixTimestamp")]
-    unix_timestamp: u64,
+    unix_timestamp: i64,
 }
 
 /// Raw delegation info
@@ -167,6 +187,28 @@ struct RawDelegation {
     warmup_cooldown_rate: f64,
 }
 
+/// Ceiling for any single account balance or delegated amount.
+///
+/// Total SOL supply is roughly 6e8 SOL = 6e17 lamports; this is 1e18, an order
+/// of magnitude of headroom above anything that can exist while still being far
+/// below u64::MAX (1.8e19). Its purpose is to catch a response that is wrong,
+/// not to cap a pool that is merely large.
+/// Ceiling on a single `getProgramAccounts` response body.
+///
+/// Nothing on chain bounds how many stake accounts name a given authority, and
+/// `authorized.staker` is attacker-settable, so a third party can plant
+/// accounts against any pool for rent alone. At roughly 745 bytes per account
+/// on the wire, 64 MiB is about 90k accounts: far above the largest real pool
+/// (1,392 accounts, ~1 MiB) and far below what would exhaust memory, since the
+/// body is buffered whole before being deserialized.
+///
+/// Exceeding it is a loud error rather than a truncation: a partial response
+/// would understate the pool, and an understated balance is worse than an
+/// absent one.
+const MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
+
+pub(crate) const MAX_PLAUSIBLE_LAMPORTS: u64 = 1_000_000_000_000_000_000;
+
 fn default_warmup_cooldown_rate() -> f64 {
     0.25
 }
@@ -194,6 +236,13 @@ impl RpcClient {
         let client = reqwest::Client::builder()
             .timeout(timeout)
             .user_agent("pools-data-lib/0.1.0")
+            // reqwest follows up to 10 redirects by default, which silently
+            // multiplies requests below the layer that counts them: one pool's
+            // query becomes 11 HTTP requests (measured), so a 271-pool refresh
+            // becomes 3,234 before retries compound it. A JSON-RPC POST endpoint
+            // has no legitimate reason to redirect, so surface it as an error
+            // rather than paying for it.
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .expect("Failed to create HTTP client");
 
@@ -229,13 +278,74 @@ impl RpcClient {
             .await?;
 
         // Check for HTTP errors
+        if response.status().is_redirection() {
+            // Redirects are not followed (see the client builder). A 3xx means
+            // the configured URL is not canonical, which no amount of retrying
+            // fixes — classify it as configuration so the retry loop stops at
+            // the first attempt instead of spending the whole budget per pool.
+            return Err(PoolsDataError::ConfigurationError {
+                message: format!(
+                    "RPC endpoint redirected ({}) to {:?}; configure the canonical URL directly. \
+                     Redirects are not followed because they multiply every request.",
+                    response.status(),
+                    response
+                        .headers()
+                        .get(reqwest::header::LOCATION)
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("<no Location header>")
+                ),
+            });
+        }
+        // 4xx is the client's fault and retrying cannot fix it: a bad API key
+        // (401/403), a wrong path (404), a malformed body (400). Classifying it
+        // as NetworkError made it retryable, so a deterministic permanent
+        // failure cost 1+retry_attempts requests per pool — the same
+        // amplification already closed for 3xx and RPC -32602. 429 is the
+        // exception: it is explicitly a "come back later".
+        if response.status().is_client_error()
+            && response.status() != reqwest::StatusCode::TOO_MANY_REQUESTS
+        {
+            return Err(PoolsDataError::ConfigurationError {
+                message: format!(
+                    "RPC endpoint returned {}; check the URL and credentials. Not retried.",
+                    response.status()
+                ),
+            });
+        }
         if !response.status().is_success() {
             return Err(PoolsDataError::NetworkError {
                 message: format!("HTTP error: {}", response.status()),
             });
         }
 
+        // Check the advertised length before buffering it. A pool with enough
+        // planted accounts would otherwise be read fully into memory and then
+        // into a Vec, several times its wire size, and under a strict refresh
+        // one such pool fails the whole run.
+        if let Some(len) = response.content_length() {
+            if len > MAX_RESPONSE_BYTES as u64 {
+                return Err(PoolsDataError::InvalidStakeData {
+                    message: format!(
+                        "stake accounts for authority {authority} returned {len} bytes, above the \
+                         {MAX_RESPONSE_BYTES} byte ceiling; refusing to buffer it"
+                    ),
+                });
+            }
+        }
+
         let response_text = response.text().await?;
+
+        // A chunked response carries no content-length, so the check above can
+        // be skipped entirely. Catch it after the fact rather than not at all.
+        if response_text.len() > MAX_RESPONSE_BYTES {
+            return Err(PoolsDataError::InvalidStakeData {
+                message: format!(
+                    "stake accounts for authority {authority} returned {} bytes, above the \
+                     {MAX_RESPONSE_BYTES} byte ceiling",
+                    response_text.len()
+                ),
+            });
+        }
 
         // Try to parse as RPC response
         let rpc_response: RpcResponse<Vec<RawStakeAccount>> = serde_json::from_str(&response_text)
@@ -278,8 +388,27 @@ impl RpcClient {
             match Self::parse_stake_account(raw_account) {
                 Ok(stake_account) => stake_accounts.push(stake_account),
                 Err(e) => {
-                    log::warn!("Failed to parse stake account {pubkey}: {e}");
-                    // Continue processing other accounts instead of failing completely
+                    // Skipping used to be a warn-and-continue, which let a pool
+                    // succeed with understated stake — even under
+                    // fetch_pools_strict. A silently wrong balance is worse than
+                    // an absent row.
+                    //
+                    // In practice this arm is close to unreachable: every
+                    // remaining check (owner, executable, space, program type,
+                    // stake type, the three string->u64 parses) is satisfied by
+                    // definition for an account a getProgramAccounts query on
+                    // the stake program returned, and a live fetch of all 271
+                    // pools produced zero hits. The real within-pool guarantee
+                    // comes one step earlier, from decoding the whole array at
+                    // once. This is the backstop for a shape that slips past
+                    // that, not the primary defence.
+                    log::error!("stake account {pubkey} failed to parse: {e}");
+                    return Err(PoolsDataError::InvalidStakeData {
+                        message: format!(
+                            "stake account {pubkey} for authority {authority} did not parse ({e}); \
+                             refusing to report this pool with an understated balance"
+                        ),
+                    });
                 }
             }
         }
@@ -291,6 +420,23 @@ impl RpcClient {
     fn parse_stake_account(raw: RawStakeAccount) -> Result<StakeAccountInfo> {
         // Validate that this is actually a stake account
         Self::validate_stake_account(&raw)?;
+
+        // Reject balances that cannot exist before they reach any accumulator.
+        // The totals are u64 sums; a release build wraps silently, so an
+        // out-of-range value from a lying or buggy RPC would be returned as a
+        // successful pool with corrupted figures — measured: u64::MAX + 10 came
+        // back as total_lamports = 9, Ok. Total SOL supply is ~6e8 (6e17
+        // lamports), so anything past MAX_PLAUSIBLE_LAMPORTS is impossible on
+        // chain and means the response is wrong, not that the pool is enormous.
+        if raw.account.lamports > MAX_PLAUSIBLE_LAMPORTS {
+            return Err(PoolsDataError::InvalidStakeData {
+                message: format!(
+                    "stake account {} reports {} lamports, which exceeds the total SOL supply; \
+                     refusing to fold an impossible balance into pool totals",
+                    raw.pubkey, raw.account.lamports
+                ),
+            });
+        }
 
         let rent_exempt_reserve = raw
             .account
@@ -312,8 +458,8 @@ impl RpcClient {
         let lockup = StakeLockup {
             custodian: raw.account.data.parsed.info.meta.lockup.custodian,
             epoch: raw.account.data.parsed.info.meta.lockup.epoch,
-            #[allow(clippy::cast_possible_wrap)] // Unix timestamps are typically positive and fit in i64
-            unix_timestamp: raw.account.data.parsed.info.meta.lockup.unix_timestamp as i64,
+            // No cast: the field is already i64, matching Solana's UnixTimestamp.
+            unix_timestamp: raw.account.data.parsed.info.meta.lockup.unix_timestamp,
         };
 
         let delegation = if let Some(stake_data) = raw.account.data.parsed.info.stake {
@@ -349,11 +495,11 @@ impl RpcClient {
         }
 
         // Validate account space (stake accounts are always 200 bytes)
-        if raw.account.space != 200 {
+        if raw.account.space.is_some_and(|s| s != 200) {
             return Err(PoolsDataError::InvalidStakeData {
                 message: format!(
                     "Invalid stake account space: {} (expected 200)",
-                    raw.account.space
+                    raw.account.space.unwrap_or_default()
                 ),
             });
         }
@@ -393,6 +539,18 @@ impl RpcClient {
                     message: format!("Invalid stake amount: {e}"),
                 })?;
 
+        // Same ceiling as account lamports: a delegated amount past the total
+        // SOL supply means the response is wrong, and these values are summed
+        // into u64 totals that wrap silently in release builds.
+        if stake > MAX_PLAUSIBLE_LAMPORTS {
+            return Err(PoolsDataError::InvalidStakeData {
+                message: format!(
+                    "delegation reports {stake} lamports staked, which exceeds the total SOL \
+                     supply; refusing to fold an impossible amount into pool totals"
+                ),
+            });
+        }
+
         let activation_epoch = raw
             .delegation
             .activation_epoch
@@ -431,6 +589,18 @@ impl RpcClient {
             .send()
             .await?;
 
+        // Same classification as the fetch path: a 3xx means the configured URL
+        // is not canonical, which retrying never fixes. Leaving it as a retryable
+        // NetworkError here would have a caller consulting is_retryable() retry a
+        // permanent 308 that normal fetches correctly stop on.
+        if response.status().is_redirection() {
+            return Err(PoolsDataError::ConfigurationError {
+                message: format!(
+                    "RPC endpoint redirected ({}) during health check; configure the canonical URL",
+                    response.status()
+                ),
+            });
+        }
         if !response.status().is_success() {
             return Err(PoolsDataError::NetworkError {
                 message: format!("Health check failed: {}", response.status()),
@@ -569,4 +739,92 @@ mod tests {
 
     // Note: Integration tests that require actual RPC calls should be in a separate file
     // and marked with #[ignore] or run only in CI with real endpoints
+}
+
+#[cfg(test)]
+mod deser_fragility {
+    use super::*;
+    use serde_json::Value;
+
+    /// 221 real accounts, captured 2026-09-16 from getProgramAccounts filtered on
+    /// delegation.voter (offset 124) for QUANT7qKUEW4PS4eP9jq4K35rDHpgWkWcgjbW1CwnGJ.
+    const FIXTURE: &str = include_str!("../tests/fixtures/stake_accounts_quant_2026-09-16.json");
+
+    fn parse(v: &Value) -> Result<usize> {
+        let text = v.to_string();
+        let resp: RpcResponse<Vec<RawStakeAccount>> =
+            serde_json::from_str(&text).map_err(|e| PoolsDataError::ParseError {
+                message: e.to_string(),
+            })?;
+        Ok(resp.result.map_or(0, |r| r.len()))
+    }
+
+    fn fixture() -> Value {
+        serde_json::from_str(FIXTURE).expect("fixture is valid json")
+    }
+
+    /// One record that fails to deserialize loses every record in the response,
+    /// because the array decodes in a single serde_json::from_str call. Each
+    /// mutation below is a shape agave can legally emit; before the fix each one
+    /// took all 221 accounts with it.
+    #[test]
+    fn one_odd_account_does_not_lose_the_whole_response() {
+        let baseline = parse(&fixture()).expect("unmutated fixture parses");
+        assert_eq!(baseline, 221, "fixture should hold 221 accounts");
+
+        // Negative lockup: UnixTimestamp is i64 upstream and the runtime does not
+        // require it to be positive. Anyone can Initialize an account naming this
+        // pool's authority as staker and set one.
+        let mut v = fixture();
+        v["result"][0]["account"]["data"]["parsed"]["info"]["meta"]["lockup"]["unixTimestamp"] =
+            Value::from(-1);
+        assert_eq!(parse(&v).expect("negative lockup must parse"), 221);
+
+        // rentEpoch removed: not declared, so serde ignores it.
+        let mut v = fixture();
+        v["result"][0]["account"]
+            .as_object_mut()
+            .unwrap()
+            .remove("rentEpoch");
+        assert_eq!(parse(&v).expect("absent rentEpoch must parse"), 221);
+
+        // space null: legal in agave's UiAccount.
+        let mut v = fixture();
+        v["result"][0]["account"]["space"] = Value::Null;
+        assert_eq!(parse(&v).expect("null space must parse"), 221);
+
+        // space removed entirely.
+        let mut v = fixture();
+        v["result"][0]["account"]
+            .as_object_mut()
+            .unwrap()
+            .remove("space");
+        assert_eq!(parse(&v).expect("absent space must parse"), 221);
+
+        // warmupCooldownRate removed: agave dropped it, which caused the
+        // 2026-08-03 outage this pattern already produced here once.
+        let mut v = fixture();
+        v["result"][0]["account"]["data"]["parsed"]["info"]["stake"]["delegation"]
+            .as_object_mut()
+            .unwrap()
+            .remove("warmupCooldownRate");
+        assert_eq!(
+            parse(&v).expect("absent warmupCooldownRate must parse"),
+            221
+        );
+    }
+
+    /// A present but wrong size still fails, so making space optional did not
+    /// weaken the check it feeds.
+    #[test]
+    fn a_wrong_space_value_still_fails_validation() {
+        let v = fixture();
+        let text = v.to_string();
+        let resp: RpcResponse<Vec<RawStakeAccount>> = serde_json::from_str(&text).expect("parses");
+        let mut accounts = resp.result.expect("has result");
+        accounts[0].account.space = Some(199);
+        assert!(RpcClient::validate_stake_account(&accounts[0]).is_err());
+        accounts[0].account.space = None;
+        assert!(RpcClient::validate_stake_account(&accounts[0]).is_ok());
+    }
 }

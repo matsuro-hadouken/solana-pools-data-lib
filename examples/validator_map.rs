@@ -13,16 +13,40 @@ async fn main() -> solana_pools_data_lib::Result<()> {
     if let Some(stats) = pool_stats.get("jito") {
         println!("Pool: jito");
         println!("  Total Accounts: {}", stats.summary().total_accounts);
-        println!("  Activating Accounts: {}", stats.summary().activating_accounts);
+        println!(
+            "  Activating Accounts: {}",
+            stats.summary().activating_accounts
+        );
         println!("  Active Accounts: {}", stats.summary().active_accounts);
-        println!("  Deactivating Accounts: {}", stats.summary().deactivating_accounts);
-        println!("  Deactivated Accounts: {}", stats.summary().deactivated_accounts);
-        println!("  Total SOL: {}", stats.summary().total_lamports as f64 / 1_000_000_000.0);
-        println!("  Activating Stake SOL: {}", stats.summary().activating_stake_lamports as f64 / 1_000_000_000.0);
-        println!("  Active Stake SOL: {}", stats.summary().active_stake_lamports as f64 / 1_000_000_000.0);
-        println!("  Deactivating Stake SOL: {}", stats.summary().deactivating_stake_lamports as f64 / 1_000_000_000.0);
-        println!("  Deactivated Stake SOL: {}", stats.summary().deactivated_stake_lamports as f64 / 1_000_000_000.0);
-    println!("  Validator Count: {}", stats.validators.len());
+        println!(
+            "  Deactivating Accounts: {}",
+            stats.summary().deactivating_accounts
+        );
+        println!(
+            "  Deactivated Accounts: {}",
+            stats.summary().deactivated_accounts
+        );
+        println!(
+            "  Total SOL: {}",
+            stats.summary().total_lamports as f64 / 1_000_000_000.0
+        );
+        println!(
+            "  Activating Stake SOL: {}",
+            stats.summary().activating_stake_lamports as f64 / 1_000_000_000.0
+        );
+        println!(
+            "  Active Stake SOL: {}",
+            stats.summary().active_stake_lamports as f64 / 1_000_000_000.0
+        );
+        println!(
+            "  Deactivating Stake SOL: {}",
+            stats.summary().deactivating_stake_lamports as f64 / 1_000_000_000.0
+        );
+        println!(
+            "  Deactivated Stake SOL: {}",
+            stats.summary().deactivated_stake_lamports as f64 / 1_000_000_000.0
+        );
+        println!("  Validator Count: {}", stats.validators.len());
 
         // Print first validator and first account for demo
         if let Some(vstat) = stats.validators.first() {
@@ -30,10 +54,23 @@ async fn main() -> solana_pools_data_lib::Result<()> {
             if let Some(account) = vstat.accounts.first() {
                 println!("    Account: {}", account.account_pubkey);
                 println!("      State: {:?}", account.account_state);
-                println!("      SOL: {}", account.account_size_in_lamports as f64 / 1_000_000_000.0);
-                println!("      Activation Epoch: {:?}", account.activation_epoch.unwrap_or_default());
-                println!("      Deactivation Epoch: {:?}", account.deactivation_epoch.unwrap_or_default());
-                println!("      Authority: staker={:?}, withdrawer={:?}", account.authorized_staker.clone().unwrap_or_default(), account.authorized_withdrawer.clone().unwrap_or_default());
+                println!(
+                    "      SOL: {}",
+                    account.account_size_in_lamports as f64 / 1_000_000_000.0
+                );
+                println!(
+                    "      Activation Epoch: {:?}",
+                    account.activation_epoch.unwrap_or_default()
+                );
+                println!(
+                    "      Deactivation Epoch: {:?}",
+                    account.deactivation_epoch.unwrap_or_default()
+                );
+                println!(
+                    "      Authority: staker={:?}, withdrawer={:?}",
+                    account.authorized_staker.clone().unwrap_or_default(),
+                    account.authorized_withdrawer.clone().unwrap_or_default()
+                );
             }
         }
     } else {
@@ -51,12 +88,13 @@ async fn fetch_current_epoch(rpc_url: &str) -> solana_pools_data_lib::Result<u64
         "method": "getEpochInfo",
         "params": []
     });
-    let resp = client.post(rpc_url)
-        .json(&body)
-        .send()
-        .await?;
+    let resp = client.post(rpc_url).json(&body).send().await?;
     let resp_json: serde_json::Value = resp.json().await?;
-    let epoch = resp_json["result"]["epoch"].as_u64()
-        .ok_or_else(|| PoolsDataError::ParseError { message: "No epoch in response".to_string() })?;
+    let epoch =
+        resp_json["result"]["epoch"]
+            .as_u64()
+            .ok_or_else(|| PoolsDataError::ParseError {
+                message: "No epoch in response".to_string(),
+            })?;
     Ok(epoch)
 }

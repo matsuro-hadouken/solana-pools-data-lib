@@ -1,11 +1,11 @@
 
 # Pools Data Library
 
-Rust library for fetching Solana stake pools data. Supports production and debug formats, RPC configuration, and 31 pools.
+Rust library for fetching Solana stake pools data. Supports production and debug formats, RPC configuration, and 271 pools.
 
 ## Features
 - Pool, validator, and account statistics calculated in-library
-- 31 supported pools (Jito, Marinade, Lido, etc.)
+- 271 supported pools (Jito, Marinade, Lido, etc.), auto-discovered on chain
 - Rate limiting, retries, timeouts, provider presets
 
 ## Data Returned
@@ -39,6 +39,8 @@ Rust library for fetching Solana stake pools data. Supports production and debug
 - `PoolsDataClient::test_connection()` - Tests RPC endpoint connectivity
 - `PoolsDataClient::fetch_pools(pool_names)` - Returns production data for specified pools
 - `PoolsDataClient::fetch_all_pools()` - Returns production data for all supported pools
+- `PoolsDataClient::fetch_pools_strict(pool_names)` - Like `fetch_pools`, but errors if **any** pool fails
+- `PoolsDataClient::fetch_all_pools_strict()` - Like `fetch_all_pools`, but errors if **any** pool fails
 - `PoolsDataClient::fetch_pools_debug(pool_names)` - Returns debug data for specified pools with raw RPC fields
 
 ## Usage Note
@@ -86,10 +88,41 @@ Manual tuning:
 `.rate_limit(n)` | `.timeout(secs)` | `.retry_attempts(n)` | `.max_concurrent_requests(n)`
 
 ## Supported Pools
-31 Solana stake pools. List: `PoolsDataClient::list_available_pools()`
+271 Solana stake pools: auto-discovered SPL-family stake pools plus a hand-maintained
+list of custodial and non-SPL stakers. Regenerate with:
+
+`cargo run --features discover --example discover_pools -- --min-sol 1 --unnamed-min-sol 5000`
+
+`--min-sol` sets the size floor for inclusion. `--unnamed-min-sol` (default 10000)
+withholds a pool that no upstream source names, rather than minting a permanent
+`unnamed_*` API key for it; such a pool appears automatically once named or once
+it crosses that size.
+
+List: `PoolsDataClient::list_available_pools()`
 
 ## Error Handling
 All API methods return `Result`. Partial failures available in debug format.
+
+**Partial results are silent by default.** `fetch_pools` and `fetch_all_pools` return
+`Ok` when *at least one* pool succeeds, dropping the rest. On a rate-limited endpoint
+that means a refresh can 429 most of its pools and still look successful — a writer
+that treats "absent from the response" as "delete this row" would then wipe most of a
+table.
+
+For scheduled refreshes that write to a database, prefer the strict variants. They
+are all-or-nothing; which error you get depends on how the request failed — an
+unknown pool name gives `PoolNotFound` before any RPC call, a partial failure gives
+`BatchOperationFailed { successful, failed }` with each failure logged, and a total
+outage propagates the underlying network/RPC error:
+
+```rust
+match client.fetch_all_pools_strict().await {
+    Ok(pools) => write_to_db(&pools).await?,   // every pool present
+    Err(e) => log::error!("refresh incomplete, not writing: {e}"),
+}
+```
+
+Use `fetch_pools_debug()` if you want the partial data *and* the failure list.
 
 ## Common Use Cases
 - Database storage (production format)

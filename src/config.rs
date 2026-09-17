@@ -234,14 +234,15 @@ impl PoolsDataClientBuilder {
     pub fn auto_config(mut self, rpc_url: &str) -> Self {
         // Basic URL-based detection
         let url_lower = rpc_url.to_lowercase();
-        
+
         if url_lower.contains("alchemy") {
             self = self.alchemy_config();
         } else if url_lower.contains("quicknode") {
             self = self.quicknode_config();
         } else if url_lower.contains("helius") {
             self = self.helius_config();
-        } else if url_lower.contains("mainnet-beta.solana.com") || url_lower.contains("api.mainnet") {
+        } else if url_lower.contains("mainnet-beta.solana.com") || url_lower.contains("api.mainnet")
+        {
             self = self.public_rpc_config();
         } else if url_lower.contains("localhost") || url_lower.contains("127.0.0.1") {
             self = self.development_config();
@@ -249,7 +250,7 @@ impl PoolsDataClientBuilder {
             // Default to conservative settings for unknown endpoints
             self = self.private_rpc_config();
         }
-        
+
         self
     }
 
@@ -310,7 +311,9 @@ impl PoolsDataClientBuilder {
                 });
             }
             match std::num::NonZeroU32::new(rps) {
-                Some(nonzero_rps) => Some(Arc::new(RateLimiter::direct(Quota::per_second(nonzero_rps)))),
+                Some(nonzero_rps) => Some(Arc::new(RateLimiter::direct(Quota::per_second(
+                    nonzero_rps,
+                )))),
                 None => {
                     return Err(PoolsDataError::ConfigurationError {
                         message: "Rate limit must be greater than 0".to_string(),
@@ -337,11 +340,13 @@ impl PoolsDataClientBuilder {
 pub struct ClientConfig {
     pub rpc_url: String,
     pub rate_limiter: Option<
-        Arc<RateLimiter<
-            governor::state::direct::NotKeyed,
-            governor::state::InMemoryState,
-            governor::clock::DefaultClock,
-        >>,
+        Arc<
+            RateLimiter<
+                governor::state::direct::NotKeyed,
+                governor::state::InMemoryState,
+                governor::clock::DefaultClock,
+            >,
+        >,
     >,
     pub retry_attempts: u32,
     pub retry_base_delay: Duration,
@@ -516,5 +521,56 @@ mod tests {
             PrivateRpcConfig::MAX_CONCURRENT_REQUESTS
         );
         assert_eq!(config.retry_attempts, PrivateRpcConfig::RETRY_ATTEMPTS);
+    }
+
+    /// The registry grew 61 -> 271 pools and `fetch_all_pools` issues one
+    /// getProgramAccounts per pool, so a loosened public preset multiplies load
+    /// on exactly the endpoint least able to absorb it. Pin the conservatism.
+    #[test]
+    fn public_preset_stays_conservative() {
+        assert_eq!(PublicRpcConfig::RATE_LIMIT_PER_SECOND, 1);
+        assert_eq!(PublicRpcConfig::MAX_CONCURRENT_REQUESTS, 1);
+        // Compared through a binding so the check is a real runtime assertion
+        // rather than a const-folded tautology clippy would flag.
+        let backoff_ms = PublicRpcConfig::RETRY_BASE_DELAY_MS;
+        assert!(
+            backoff_ms >= 1000,
+            "public retries must back off by at least a second, got {backoff_ms}"
+        );
+    }
+
+    /// Worst-case request count for a full refresh is bounded and knowable:
+    /// pools * (1 + retry_attempts). At 271 pools this is the number to size an
+    /// RPC plan against, so keep the retry budget from drifting upward.
+    #[test]
+    fn worst_case_request_budget_is_bounded() {
+        const POOLS: u32 = 271;
+        let budgets = [
+            ("public", PublicRpcConfig::RETRY_ATTEMPTS),
+            ("private", PrivateRpcConfig::RETRY_ATTEMPTS),
+            ("enterprise", EnterpriseConfig::RETRY_ATTEMPTS),
+        ];
+        let worst = budgets.iter().max_by_key(|(_, n)| *n).expect("non-empty");
+        assert!(
+            worst.1 <= 5,
+            "{} retry budget {} would amplify too far",
+            worst.0,
+            worst.1
+        );
+        assert_eq!(POOLS * (1 + PublicRpcConfig::RETRY_ATTEMPTS), 1626);
+        assert_eq!(POOLS * (1 + EnterpriseConfig::RETRY_ATTEMPTS), 542);
+    }
+
+    /// `build()` must refuse a concurrency that would stampede any endpoint.
+    #[test]
+    fn build_rejects_unbounded_concurrency() {
+        assert!(PoolsDataClientBuilder::new()
+            .max_concurrent_requests(101)
+            .build("https://example.com")
+            .is_err());
+        assert!(PoolsDataClientBuilder::new()
+            .max_concurrent_requests(0)
+            .build("https://example.com")
+            .is_err());
     }
 }

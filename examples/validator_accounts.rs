@@ -27,7 +27,10 @@ async fn main() -> solana_pools_data_lib::Result<()> {
                     println!("    Lamports: {}", account.account_size_in_lamports);
                     println!("    Activation Epoch: {:?}", account.activation_epoch);
                     println!("    Deactivation Epoch: {:?}", account.deactivation_epoch);
-                    println!("    Authority: staker={:?}, withdrawer={:?}", account.authorized_staker, account.authorized_withdrawer);
+                    println!(
+                        "    Authority: staker={:?}, withdrawer={:?}",
+                        account.authorized_staker, account.authorized_withdrawer
+                    );
                 }
             }
         }
@@ -49,12 +52,13 @@ async fn fetch_current_epoch(rpc_url: &str) -> solana_pools_data_lib::Result<u64
         "method": "getEpochInfo",
         "params": []
     });
-    let resp = client.post(rpc_url)
-        .json(&body)
-        .send()
-        .await?;
+    let resp = client.post(rpc_url).json(&body).send().await?;
     let resp_json: serde_json::Value = resp.json().await?;
-    let epoch = resp_json["result"]["epoch"].as_u64()
-        .ok_or_else(|| PoolsDataError::ParseError { message: "No epoch in response".to_string() })?;
+    let epoch =
+        resp_json["result"]["epoch"]
+            .as_u64()
+            .ok_or_else(|| PoolsDataError::ParseError {
+                message: "No epoch in response".to_string(),
+            })?;
     Ok(epoch)
 }

@@ -27,8 +27,13 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .and_then(PoolsDataClient::from_config)?;
 
     for (index, pool_info) in available_pools.iter().enumerate() {
-    println!("{}/{}: Fetching {}...", index + 1, available_pools.len(), pool_info.name);
-    match client.fetch_pools(&[&pool_info.name]).await {
+        println!(
+            "{}/{}: Fetching {}...",
+            index + 1,
+            available_pools.len(),
+            pool_info.name
+        );
+        match client.fetch_pools(&[&pool_info.name]).await {
             Ok(pools) => {
                 if let Some((_name, data)) = pools.iter().next() {
                     successful += 1;

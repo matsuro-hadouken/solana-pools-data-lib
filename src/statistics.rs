@@ -14,29 +14,43 @@ pub struct PoolStatisticsSummary {
 
 impl PoolStatisticsFull {
     #[must_use]
+    /// Lamport sums saturate rather than wrap. A release build wraps a plain
+    /// `+=`, and the per-record ceiling in rpc.rs bounds one account without
+    /// bounding their sum, so roughly 19 records at the ceiling would overflow
+    /// and report a fabricated total as a success.
     pub fn summary(&self) -> PoolStatisticsSummary {
         use crate::statistics::StakeState;
         let mut summary = PoolStatisticsSummary::default();
         for validator in &self.validators {
             for account in &validator.accounts {
                 summary.total_accounts += 1;
-                summary.total_lamports += account.account_size_in_lamports;
+                summary.total_lamports = summary
+                    .total_lamports
+                    .saturating_add(account.account_size_in_lamports);
                 match account.account_state {
                     StakeState::Activating => {
                         summary.activating_accounts += 1;
-                        summary.activating_stake_lamports += account.account_size_in_lamports;
+                        summary.activating_stake_lamports = summary
+                            .activating_stake_lamports
+                            .saturating_add(account.account_size_in_lamports);
                     }
                     StakeState::Active => {
                         summary.active_accounts += 1;
-                        summary.active_stake_lamports += account.account_size_in_lamports;
+                        summary.active_stake_lamports = summary
+                            .active_stake_lamports
+                            .saturating_add(account.account_size_in_lamports);
                     }
                     StakeState::Deactivating => {
                         summary.deactivating_accounts += 1;
-                        summary.deactivating_stake_lamports += account.account_size_in_lamports;
+                        summary.deactivating_stake_lamports = summary
+                            .deactivating_stake_lamports
+                            .saturating_add(account.account_size_in_lamports);
                     }
                     StakeState::Inactive | StakeState::Waste | StakeState::Unknown => {
                         summary.deactivated_accounts += 1;
-                        summary.deactivated_stake_lamports += account.account_size_in_lamports;
+                        summary.deactivated_stake_lamports = summary
+                            .deactivated_stake_lamports
+                            .saturating_add(account.account_size_in_lamports);
                     }
                 }
             }

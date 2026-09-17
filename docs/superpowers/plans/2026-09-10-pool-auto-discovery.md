@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Library MSRV is `rust-version = "1.75"` (`Cargo.toml:13`). No change. Generator-only deps are optional and feature-gated; only a maintainer running the generator needs 1.81+.
+- Library MSRV is `rust-version = "1.82"` (`Cargo.toml:13`), established by compiling rather than by reading declared MSRVs. Generator-only deps are optional and feature-gated; a maintainer running the generator needs **1.89+**. (During execution this read 1.75, which was already inaccurate before the branch began — see the spec's MSRV section.)
 - No new **default** dependencies. `solana-pubkey` and `toml` are `optional = true`, activated only by the `discover` feature.
 - **Pool names are API keys.** A name, once emitted, is never changed or deleted by the generator. Identity is the authority pubkey.
 - Generator output is deterministic: sorted by authority pubkey, rustfmt-clean, byte-identical across runs against unchanged chain state.
@@ -85,7 +85,7 @@ pub mod discovery;
 echo '//! Offline pool discovery. Compiled only with the `discover` feature.' > src/discovery.rs
 ```
 
-- [ ] **Step 4: Verify the 1.75 promise is intact and the feature builds**
+- [ ] **Step 4: Verify the MSRV floor is intact and the feature builds**
 
 ```bash
 cargo build                      # default features: solana-pubkey must NOT appear
@@ -192,7 +192,10 @@ mod tests {
         let failures = (0u8..=252)
             .filter(|b| derive_authority(&pool, *b, &prog).is_err())
             .count();
-        assert!(failures > 0, "wrong bumps must be rejected, not returned");
+        // Deterministic: fixed pool, fixed program, fixed bump range. Measured 118.
+        // The other 135 wrong bumps return a pubkey — create_program_address only
+        // rejects on-curve results, it does not verify canonicity.
+        assert_eq!(failures, 118, "on-curve rejection rate changed; off-curve check may be disabled");
     }
 }
 ```
@@ -406,14 +409,25 @@ pub fn slugify(sanctum_name: &str) -> Slug {
     let lower = sanctum_name.trim().to_lowercase();
     let mut core = lower.as_str();
     let mut stripped = false;
+    let mut risky = false;
     for suffix in BOILERPLATE {
         if let Some(rest) = core.strip_suffix(suffix) {
             let rest = rest.trim_end();
-            // Only strip if something meaningful survives.
-            if !rest.is_empty() {
-                core = rest;
-                stripped = true;
+            // The whole name was boilerplate ("Wrapped SOL", "SOL"): nothing
+            // legitimate survives, so refuse rather than emitting the unstripped
+            // name as if it were a brand.
+            if rest.is_empty() {
+                return Slug::Unusable;
             }
+            core = rest;
+            stripped = true;
+            // "Staked SOL" and its siblings are the canonical, unambiguous LST
+            // suffix. "Wrapped"/"Restaked"/bare "SOL" double as real brand
+            // words, so a short result from those needs a human to confirm.
+            risky = !matches!(
+                *suffix,
+                "liquid staked solana" | "liquid staked sol" | "staked solana" | "staked sol"
+            );
             break;
         }
     }
@@ -438,8 +452,8 @@ pub fn slugify(sanctum_name: &str) -> Slug {
     if slug.len() < 3 {
         return Slug::Unusable;
     }
-    // A strip that left a single short token deserves a second look.
-    if stripped && !slug.contains('_') && slug.len() <= 5 {
+    // A risky strip that left a single short token deserves a second look.
+    if stripped && risky && !slug.contains('_') && slug.len() <= 5 {
         return Slug::Suspicious { slug, original: sanctum_name.to_string() };
     }
     Slug::Clean(slug)
@@ -647,6 +661,28 @@ git commit -m "feat(discovery): registry parsing with first-run bootstrap"
 ---
 
 ### Task 5: Name assignment and deterministic rendering
+
+> **Superseded — read before reusing this task's code.** The implementation blocks below
+> shipped two Critical defects, both caught by review with probe tests. `src/discovery.rs`
+> at commit 791a3f6 is authoritative; the code here is retained only to show what was
+> asked for.
+>
+> 1. **A returning pool bricked the generator.** `assign_names` never removed a returning
+>    authority from `retired`/`manual`, so a pool that dipped below `--min-sol` and
+>    recovered appeared in two sections at once. `parse_registry` then rejects the file the
+>    generator itself wrote, with `duplicate authority`. Fixed by `retain`-ing both sections
+>    against the candidate set before the assignment loop. The original
+>    `retired_pools_keep_their_names_reserved` test missed this because it used two
+>    *different* authorities.
+> 2. **`replace_region` matched markers as bare substrings.** Any earlier mention of the
+>    marker text — a doc comment, a header line — was treated as the marker, destroying
+>    every byte between it and the real END marker. Fixed with whole-line equality after
+>    stripping `//`, `///`, or `//!`, plus scoping the END search to the region after OPEN.
+>    Note that "line starts with `//` and contains the tag" is *not* sufficient: a `//!`
+>    doc-comment sentence quoting the marker satisfies it.
+> 3. Out-of-order markers duplicated content instead of failing safe.
+> 4. `lines().join("\n")` reflowed the whole file, converting CRLF and breaking
+>    idempotency for one iteration; replaced with in-place provenance rewriting.
 
 **Files:**
 - Modify: `src/discovery.rs`

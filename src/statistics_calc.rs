@@ -1,24 +1,36 @@
 // Calculation logic for PoolStatisticsFull, ValidatorStatisticsFull, AccountStatisticsFull
 // Uses canonical state classification and current_epoch
 
-use crate::statistics::{AccountStatisticsFull, ValidatorStatisticsFull, PoolStatisticsFull, classify_stake_state};
-use crate::types::ProductionPoolData;
 use crate::error::PoolsDataError;
+use crate::statistics::{
+    classify_stake_state, AccountStatisticsFull, PoolStatisticsFull, ValidatorStatisticsFull,
+};
+use crate::types::ProductionPoolData;
 
 /// Calculate canonical pool statistics, grouping by validator and account state
 /// Clippy pedantic/nursery compliant
 ///
 /// # Errors
 /// Returns `PoolsDataError::ConfigurationError` if pool name or authority is empty.
-pub fn calculate_pool_statistics_full(pool: &ProductionPoolData, current_epoch: u64) -> Result<PoolStatisticsFull, PoolsDataError> {
+pub fn calculate_pool_statistics_full(
+    pool: &ProductionPoolData,
+    current_epoch: u64,
+) -> Result<PoolStatisticsFull, PoolsDataError> {
     if pool.pool_name.trim().is_empty() {
-        return Err(PoolsDataError::ConfigurationError { message: "Pool name is empty".to_string() });
+        return Err(PoolsDataError::ConfigurationError {
+            message: "Pool name is empty".to_string(),
+        });
     }
     if pool.authority.trim().is_empty() {
-        return Err(PoolsDataError::ConfigurationError { message: "Pool authority is empty".to_string() });
+        return Err(PoolsDataError::ConfigurationError {
+            message: "Pool authority is empty".to_string(),
+        });
     }
     // stake_accounts cannot be None, but can be empty
-    let mut validator_map: std::collections::HashMap<String, (Vec<AccountStatisticsFull>, Option<u64>)> = std::collections::HashMap::new();
+    let mut validator_map: std::collections::HashMap<
+        String,
+        (Vec<AccountStatisticsFull>, Option<u64>),
+    > = std::collections::HashMap::new();
     for account in &pool.stake_accounts {
         let delegation = account.delegation.as_ref();
         let state = classify_stake_state(delegation, current_epoch);
@@ -35,7 +47,9 @@ pub fn calculate_pool_statistics_full(pool: &ProductionPoolData, current_epoch: 
             authorized_staker: Some(account.authority.staker.clone()),
             authorized_withdrawer: Some(account.authority.withdrawer.clone()),
         };
-        let entry = validator_map.entry(validator_pubkey).or_insert((Vec::new(), credits));
+        let entry = validator_map
+            .entry(validator_pubkey)
+            .or_insert((Vec::new(), credits));
         entry.0.push(account_stats);
         // If credits is Some, always set it (should be same for all accounts)
         if credits.is_some() {
@@ -44,11 +58,13 @@ pub fn calculate_pool_statistics_full(pool: &ProductionPoolData, current_epoch: 
     }
     let validators: Vec<ValidatorStatisticsFull> = validator_map
         .into_iter()
-        .map(|(validator_pubkey, (accounts, credits))| ValidatorStatisticsFull {
-            validator_pubkey,
-            accounts,
-            last_epoch_credits_cumulative: credits,
-        })
+        .map(
+            |(validator_pubkey, (accounts, credits))| ValidatorStatisticsFull {
+                validator_pubkey,
+                accounts,
+                last_epoch_credits_cumulative: credits,
+            },
+        )
         .collect();
     Ok(PoolStatisticsFull {
         pool_name: pool.pool_name.clone(),

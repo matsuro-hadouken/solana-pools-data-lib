@@ -38,6 +38,10 @@ pub enum PoolsDataError {
     #[error("Pool '{pool_name}' not found in available pools")]
     PoolNotFound { pool_name: String },
 
+    /// A pool had no stake accounts. No longer produced by the client: an empty
+    /// account list is a legitimate result (a pool can hold its whole balance in
+    /// reserve) and now yields a successful `PoolData` with zeroed statistics.
+    /// Retained because removing a public enum variant is a breaking change.
     #[error("No stake accounts found for pool '{pool_name}'")]
     NoStakeAccounts { pool_name: String },
 
@@ -90,16 +94,37 @@ impl PoolError {
 
     /// Determine if an error is retryable
     const fn is_retryable(error: &PoolsDataError) -> bool {
-        match error {
+        error.is_retryable()
+    }
+}
+
+impl PoolsDataError {
+    /// Whether retrying this error could plausibly succeed.
+    ///
+    /// The retry loop consults this before spending another attempt. Without it
+    /// a permanent failure — invalid params, a parse error, a misconfigured URL —
+    /// costs the full retry budget per pool, which across a 271-pool refresh
+    /// multiplies a deterministic failure into hundreds of pointless requests on
+    /// an endpoint that is often already rate-limiting.
+    #[must_use]
+    pub const fn is_retryable(&self) -> bool {
+        match self {
             // Retryable errors - temporary issues that might succeed on retry
             PoolsDataError::NetworkError { .. }
             | PoolsDataError::RateLimitExceeded { .. }
             | PoolsDataError::RequestTimeout { .. }
+            // ParseError covers response *decoding*, which is usually
+            // transport-adjacent rather than permanent: a proxy returning
+            // truncated JSON, an HTML error page with a 200, a body missing
+            // `result`. One backend behind a load balancer can fail this while
+            // the next succeeds, so the retry budget is worth spending. A
+            // genuinely malformed account is InvalidStakeData, which is not
+            // retried.
+            | PoolsDataError::ParseError { .. }
             | PoolsDataError::InternalError { .. } => true,
 
             // Non-retryable errors - permanent issues that cannot be resolved by retrying
-            PoolsDataError::ParseError { .. }
-            | PoolsDataError::ConfigurationError { .. }
+            PoolsDataError::ConfigurationError { .. }
             | PoolsDataError::PoolNotFound { .. }
             | PoolsDataError::NoStakeAccounts { .. }
             | PoolsDataError::InvalidStakeData { .. }
@@ -160,10 +185,23 @@ mod tests {
         };
         assert!(PoolError::is_retryable(&network_error));
 
+        // ParseError was reclassified to retryable when the retry loop started
+        // actually consulting this function. It covers response *decoding*,
+        // which is usually transport-adjacent — a proxy truncating JSON, an HTML
+        // error page served with a 200, a body missing `result`. One backend
+        // behind a load balancer can fail that while the next succeeds. A few
+        // wasted retries cost less than aborting a strict 271-pool refresh over
+        // one transient bad response. A genuinely malformed on-chain account is
+        // InvalidStakeData, asserted non-retryable below.
         let parse_error = PoolsDataError::ParseError {
             message: "Invalid JSON".to_string(),
         };
-        assert!(!PoolError::is_retryable(&parse_error));
+        assert!(PoolError::is_retryable(&parse_error));
+
+        let invalid_stake = PoolsDataError::InvalidStakeData {
+            message: "account did not parse".to_string(),
+        };
+        assert!(!PoolError::is_retryable(&invalid_stake));
 
         let rate_limit_error = PoolsDataError::RateLimitExceeded {
             message: "Too many requests".to_string(),

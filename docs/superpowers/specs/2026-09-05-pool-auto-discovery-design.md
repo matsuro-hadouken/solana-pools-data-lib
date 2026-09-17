@@ -132,17 +132,22 @@ a human deletes entries.
 **Migration.** If an LST moves to a new pool address, its withdraw authority changes, so it
 appears as a new pool with a colliding slug and gets a `_2` suffix while the old entry is
 retained-and-commented. The generator cannot detect that these are the same operator —
-merging them is a human edit. Same-mint-different-authority is flagged to stderr so the
-operator sees the case rather than discovering it later.
+merging them is a human edit. *As shipped, no same-mint-different-authority warning is
+emitted:* the generator keeps no mint index, so a migration surfaces only as the `_2` entry
+appearing next to the retained original in the diff. What it does flag to stderr is the
+narrower case of two pools deriving the **same** authority, where it keeps the first
+deterministically.
 
 Rule 1 is the invariant: **the authority pubkey is the pool's identity; the name is a
 mutable label that the generator may add but never change.** Pool names are API keys, and a
 regeneration that renames `forward_industries` to `dumsol` would silently break every
 consumer keyed on the old name.
 
-Where the frozen name disagrees with the on-chain symbol, the generator appends a trailing
-comment (`// sanctum: dumSOL`) so divergences are visible and can be resolved by a
-deliberate human edit.
+*Not shipped:* the design called for a trailing `// sanctum: dumSOL` comment wherever the
+frozen name disagrees with the on-chain symbol. The generator emits no such note — a frozen
+entry keeps whatever note it already carried, plus the generator-owned markers
+(`stale: ...`, `below threshold ...`). Divergences are found by reading the Sanctum list,
+not from `src/pools.rs`.
 
 Name collisions between two different authorities are resolved by appending `_2`, `_3`,
 matching the existing registry convention. Measured: 2 collisions today (`binance` against
@@ -202,8 +207,10 @@ cargo run --example discover_pools -- --min-sol 1
 git diff                      # human reviews names
 ```
 
-Writes `src/pools.rs` in place via `--out` (default `src/pools.rs`). It must **not** use a
-stdout redirect: `> src/pools.rs` truncates the file at redirect time, before the process
+Writes `src/pools.rs` in place. The path is hardcoded — there is no `--out` flag, and the
+generator rejects every unrecognized argument by name, so passing one is a hard error rather
+than a silent no-op. Its only flags are `--min-sol <SOL>` and `--verify`. It must **not** use
+a stdout redirect: `> src/pools.rs` truncates the file at redirect time, before the process
 starts, destroying the MANUAL block and the existing name bindings the generator needs to
 read. Output goes to a sibling temp file and is renamed over the target only after a
 successful run.
@@ -214,10 +221,28 @@ fetch Sanctum list -> apply name precedence -> emit `src/pools.rs`.
 Reads the current `src/pools.rs` first, to recover existing authority-to-name bindings and
 the MANUAL block, then rewrites it.
 
-**Dependencies, MSRV-gated.** `Cargo.toml:13` declares `rust-version = "1.75"`, but every
-published `solana-pubkey` exceeds it (3.0.0 needs 1.81; 4.x needs 1.89), and host-side
-`create_program_address` sits behind the `curve25519` feature. A plain dev-dependency would
-break `cargo test` for anyone on 1.75.
+**Dependencies, MSRV-gated.** The library's true floor is **1.82**, and the `discover`
+feature's was **1.89** until `solana-pubkey` was dropped; it is now 1.82 too.
+Both were established by compiling, not by reading declared MSRVs —
+which turned out to be wrong in both directions:
+
+| Config | Floor | What sets it |
+|---|---|---|
+| default | 1.82 | `icu_*` 2.0 via `reqwest -> url -> idna`. 1.81 fails, 1.82 builds. |
+| `--features discover` | 1.82 | Was 1.89 via `solana-address` 2.7 / `solana-hash` 4.6. Dropping `solana-pubkey` for `sha2` + `curve25519-dalek` (MSRV 1.60) removed the split. |
+
+`solana-pubkey` was used for exactly one operation: the off-curve check inside
+`create_program_address`. It cost 43 transitive crates, about a dozen of them
+solana, and forced this feature to 1.89. `sha2` + `curve25519-dalek` +
+`bs58` perform the same check in roughly 13 crates with no solana dependency at
+all, and every one of the 271 authorities re-derives bit-identically. The
+118-of-253 on-curve rejection test carried over unchanged.
+
+Historical note, since the reasoning below drove an earlier decision:
+`solana-pubkey` 3.0.0 *declares* 1.81, but its transitive deps demand 1.89 — and an
+intermediate crate (`wincode` 0.6.1) needs `edition2024`, which a pre-1.85 Cargo cannot even
+parse. Host-side `create_program_address` additionally sits behind the `curve25519` feature.
+A plain dev-dependency would have dragged every consumer from 1.82 to 1.89.
 
 So they become *optional* dependencies behind a feature, and the example requires it:
 
@@ -238,15 +263,24 @@ required-features = ["discover"]
 cargo run --features discover --example discover_pools -- --min-sol 1
 ```
 
-The library's 1.75 promise is unchanged for consumers and for CI: an inactive feature's
-optional dependencies are resolved into `Cargo.lock` but never compiled, so their MSRV is
-not enforced as a build unit. Only the maintainer running the generator needs 1.81+.
+Consumers stay at 1.82: an inactive feature's optional dependencies are resolved into
+`Cargo.lock` but never compiled, so their MSRV is not enforced as a build unit. Only the
+maintainer running the generator needs 1.89+. That seven-version gap is the whole
+justification for the feature gate — it is a larger gap than an earlier draft of this spec
+assumed, not a smaller one.
 
-Two caveats. `cargo --all-features` activates `discover` and will therefore require 1.81+ by
-design; CI must not use it for the MSRV job. And if `Cargo.lock` is ever regenerated by a
-much newer Cargo, the lockfile *format version* can break 1.75 before compilation is even
-reached — that is independent of this feature, but it is the thing most likely to falsify
-the promise in practice.
+Three caveats, the last of which has already bitten:
+- `cargo --all-features` activates `discover` and therefore requires 1.89+ by design; an
+  MSRV check must not use it.
+- If `Cargo.lock` is regenerated by a much newer Cargo, the lockfile *format version* can
+  break the floor before compilation is reached.
+- **Lockfile drift goes around the feature gate entirely.** Regenerating `Cargo.lock` on
+  this branch silently upgraded two *shared default* transitive deps (`indexmap`,
+  `hashbrown`) to crates requiring 1.85, breaking the floor for every consumer while the
+  feature gating itself remained correct. Seven review rounds missed it because each asked
+  "is `solana-pubkey` in the default tree?" — the right question is what the *resolved*
+  default tree's highest MSRV is. An external audit caught it. Check the resolved tree, not
+  the declared dependencies.
 
 ### `src/pools.rs` (regenerated, structure changed)
 
@@ -268,8 +302,13 @@ PoolInfo::new("socean", "AzZRvyyMHBm8EHEksWxq4ozFL7JxLMydCDMGhqM6BVck"),
 // ---- END RETIRED ----
 ```
 
-The generator copies the MANUAL block through verbatim and rewrites only the GENERATED
-block. The public API of the module is unchanged.
+The generator rewrites all three blocks. MANUAL is not passed through verbatim: its entries
+are re-parsed and re-emitted from the same renderer as GENERATED, which sorts by authority
+and normalizes spacing. What survives is the content — each entry's name, authority and
+trailing `// note` — not the byte layout, and not any non-entry line, which the parser now
+rejects outright rather than dropping. Only text *outside* the markers is byte-preserved,
+which is why the "do not edit" guidance in `src/pools.rs` sits above `POOLS_ACTIVE` rather
+than inside a block. The public API of the module is unchanged.
 
 **First-run bootstrap.** The committed `src/pools.rs` has no markers today, so "abort when
 markers are missing" would make the first run impossible. When no markers are found, the
@@ -299,21 +338,37 @@ mis-derived authority, a stale manual entry, or a migrated pool. So emptiness mu
 visible rather than becoming invisible:
 
 - the empty case logs at `warn!` with the pool name and authority;
-- `--verify` on the generator queries each newly-derived authority, moving the check to
-  generation time where a human is present. It must not treat one empty response as proof
-  of a bad authority: a legitimate pool can hold everything in reserve, and RPC returns
-  transient empties. So a zero result is retried at a later slot, and a still-empty pool is
-  **marked, not rejected**. Rejection is reserved for the signal that actually means the
-  derivation broke — but that check is **per program, not global**. A global "all new
-  authorities empty" abort never fires when only one of the three programs diverges: the
-  other two return healthy results, and the diverged program's wrong authorities are merely
-  marked and emitted anyway, producing a factually wrong registry. So each program's cohort
-  is evaluated on its own, and every new authority under a program whose cohort verifies
-  entirely empty is withheld from the output.
+- `--verify` on the generator queries **every** candidate authority — newly derived and
+  already in the registry alike — moving the check to generation time where a human is
+  present. The query asks only "does this authority own any stake account at all", so it
+  filters on `authorized.staker` alone: a mis-derived PDA owns nothing under any filter,
+  while also requiring `authorized.withdrawer` (which the balance measurement does
+  require, see "Threshold") would make a fork that sets the two differently read as empty
+  and abort a healthy run.
 
-  A marked-empty *new* entry is never admitted while layout assumptions are what is under
-  test; it is reported to stderr for the operator to resolve. Marking is for entries that
-  already exist and have merely gone quiet.
+  It must not treat one empty response as proof of a bad authority: a legitimate pool can
+  hold everything in reserve, and RPC returns transient empties. So for a *new* authority
+  a zero result is **retried once at a later slot**, and only a result that is still empty
+  counts.
+
+  A still-empty *new* authority is **withheld from the output**, not marked and emitted.
+  The two outcomes are not symmetric. Withholding a real pool costs one later run — it is
+  admitted as soon as it holds stake. Emitting a mis-derived authority freezes a wrong name
+  onto a public API key permanently. Every withheld pool is reported to stderr by name and
+  authority so the operator can resolve it.
+
+  Marking is for entries that **already exist** in the registry and have merely gone quiet.
+  Those keep their names — a live API key is never withdrawn — and carry a `verify: no
+  stake accounts` note for a human to look at. They get a **single** query, no retry: the
+  note is advisory rather than a decision, and with ~81 registry pools under 10 SOL a
+  retry would only add sleeping to a run that already queries every pool.
+
+  Above both sits the signal that actually means the derivation broke, and that check is
+  **per program, not global**. A global "all new authorities empty" abort never fires when
+  only one of the three programs diverges: the other two return healthy results, and the
+  diverged program's wrong authorities go out with them. So each program's cohort is
+  evaluated on its own, and a program whose entire new cohort verifies empty aborts the
+  run outright.
 
 ### `src/pools.rs` invariants (new tests)
 
@@ -331,7 +386,10 @@ Output is rustfmt-compatible and idempotent: running the generator twice against
 unchanged chain state produces a byte-identical file.
 
 A header comment records the RPC endpoint, slot, epoch, `--min-sol`, and the Sanctum list
-commit, so a surprising diff can be traced to what changed. The counts quoted in this spec
+revision, so a surprising diff can be traced to what changed. The endpoint is recorded as
+**scheme and host only**: this line is committed, and a Helius or Alchemy URL carries its
+API key in the path or query string, so recording it verbatim would publish a credential
+to git history. The counts quoted in this spec
 were measured at epoch 1028 against `api.mainnet-beta.solana.com`.
 
 ## Data Flow
@@ -417,7 +475,7 @@ Reviewed in three adversarial rounds. Defects found and closed:
 |---|---|---|
 | 1 | First run impossible — spec aborted on missing section markers, but `pools.rs` has none | One-time bootstrap classifying the flat list against the pre-threshold derived set |
 | 2 | Bare-sha256 PDA skipped the off-curve check, so a bad bump emits a garbage authority | `create_program_address`, which errors `InvalidSeeds` |
-| 3 | `solana-pubkey` MSRV (1.81+) exceeds the repo's declared 1.75 | Optional dependency behind a `discover` feature; `cargo test` at 1.75 unaffected |
+| 3 | `solana-pubkey`'s toolchain requirement exceeds the library's | Optional dependency behind a `discover` feature. Later measured properly: library floor 1.82, feature floor 1.89 |
 | 4 | `--verify` aborted only if *all* new authorities were empty, so one diverged program still emitted wrong authorities | Per-program cohort abort; marked-empty new entries withheld |
 | 5 | `POOLS_BY_AUTHORITY` silently overwrites duplicates; tests covered duplicate names only | Duplicate-authority test across all three blocks; generator aborts on collision |
 | 6 | Retention by trailing comment is invisible to code — dead pools would accumulate into `fetch_all_pools()` | `RETIRED` section plus `get_active_pools()` |
@@ -431,3 +489,73 @@ of Jito's live account; bump@97 derivation reproduces all 28 currently-derivable
 authorities; six previously-untracked pools (sctmSOL, PSOL, dfdvSOL, GTSOL and two unnamed,
 ~6.5M SOL combined) confirmed to return stake accounts through the library's exact
 `memcmp @12` query.
+
+## MSRV, established by compilation
+
+`rust-version` read `1.75` throughout this work and was **already wrong before the branch
+started** — the `icu_*` crates pinned the real floor at 1.82 in the base lockfile. Declared
+MSRVs proved unreliable in both directions, so the floors below come from actually building:
+
+```
+cargo +1.81.0 build --locked                     -> error: icu_* requires rustc 1.82
+cargo +1.82.0 build --locked                     -> Finished
+cargo +1.82.0 build --locked --features discover -> error: wincode 0.6.1 requires edition2024
+cargo +1.85.1 build --locked --features discover -> error: solana-address 2.7 requires 1.89
+cargo +1.93.0 build --locked --features discover -> Finished
+```
+
+`rust-version` is now `1.82`. The repository has no CI and no `rust-toolchain.toml`, so
+nothing enforces this; it drifted once already and will drift again without a check that
+builds on the declared version.
+
+## Truncated-response guard, and how 5% was chosen
+
+A discovery response can be *successful, non-empty, and partial* — an RPC or
+proxy returning only some accounts. Nothing distinguishes that from the pools
+genuinely disappearing, and the generator's response to a disappeared pool is to
+retire it. Only a wholly empty program response aborted.
+
+`--max-shrink-pct` (default **5**) aborts when more than that share of the
+generated set would be **retired in one run**. The metric is the newly-retired
+set, not the net count change: net change conflates pools dropping out with new
+pools crossing the threshold, so a truncation removing 15 pools while 3
+legitimately arrive nets -12 on a 262 baseline (4.6%) and slips under the limit.
+The newly-retired set is exactly "previously-generated authorities that are no
+longer candidates" and cannot be masked by arrivals. The threshold was picked by simulating against real chain
+state rather than chosen by feel. Baseline: 262 generated pools — SPL 86,
+SanctumSpl 135, SanctumMulti 41.
+
+**Legitimate churn is tiny.** A pool leaves the set only by falling under
+`--min-sol`, so only pools near the line can move at all:
+
+| distance above cutoff | pools | share of set |
+|---|---|---|
+| within 10% | 9 | 3.4% |
+| within 50% | 30 | 11.5% |
+| within 2x | 36 | 13.7% |
+
+Even all 9 near-cutoff pools dropping in one epoch is 3.4%, and that is a wildly
+pessimistic epoch.
+
+**Truncation is not tiny.** Drop in generated count by scenario:
+
+| scenario | share retired |
+|---|---|
+| all programs return 99% | 1.5% |
+| all programs return 95% | 5.7% |
+| all programs return 90% | 10.7% |
+| SanctumMulti returns 50% (smallest single-program case) | 8.0% |
+| SanctumMulti returns nothing | 15.6% |
+| SPL returns nothing | 32.8% |
+| SanctumSpl returns nothing | 51.5% |
+| proxy caps each program at 500 accounts | 33.2% |
+
+**The gap.** Plausible churn tops out near 3.4%; the smallest meaningful
+truncation is 8.0%. 5% sits in the empty band between them, catching 16 of 17
+modelled scenarios with no realistic false-positive exposure. The one miss —
+every program returning 99% — costs about four wrongly retired pools, and
+retirement is self-healing: a retired pool that reappears is promoted back with
+its frozen name intact, so the damage is temporary and bounded.
+
+Raising the threshold catches less for no real safety gain (10% drops to 14/17
+scenarios), and lowering it to 1-2% starts colliding with ordinary churn.

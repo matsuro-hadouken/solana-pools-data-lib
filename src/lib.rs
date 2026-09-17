@@ -34,9 +34,12 @@ mod config;
 mod error;
 mod pools;
 mod rpc;
-mod types;
 pub mod statistics;
 pub mod statistics_calc;
+mod types;
+
+#[cfg(feature = "discover")]
+pub mod discovery;
 
 #[cfg(test)]
 mod statistics_calc_tests;
