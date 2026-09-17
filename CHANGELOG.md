@@ -17,6 +17,11 @@ against the live production API. See **Compatibility**.
 
 ### Added
 
+- **No Solana crates.** The generator derives program addresses from `sha2` +
+  `curve25519-dalek` directly rather than pulling `solana-pubkey`, which cost 43
+  transitive crates and forced the feature to Rust 1.89. Same off-curve check,
+  ~13 crates, zero solana dependencies, and the feature now builds on the
+  library's own 1.82.
 - **Pool discovery generator** (`cargo run --features discover --example
   discover_pools -- --min-sol 1`). Enumerates the SPL, Sanctum SPL and Sanctum
   SPL Multi stake-pool programs, derives each pool's withdraw authority, names
@@ -73,8 +78,8 @@ Availability and correctness, most reachable in normal operation:
 
 - **MSRV 1.75 → 1.82.** The declared 1.75 was already inaccurate: `icu_*` via
   `reqwest → url → idna` has required 1.82 since before this work. Established
-  by compiling, not by reading declarations. The `discover` feature needs 1.89,
-  which is why it is optional.
+  by compiling, not by reading declarations. The `discover` feature builds on the
+  same 1.82.
 - `fetch_all_pools` now iterates active pools only; retired ones still resolve
   by name.
 - Documentation on the lenient methods now states plainly that they return

@@ -10,7 +10,7 @@
 
 use serde_json::{json, Value};
 use solana_pools_data_lib::discovery::*;
-use solana_pubkey::Pubkey;
+use solana_pools_data_lib::discovery::Pubkey;
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::time::Duration;

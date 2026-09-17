@@ -3,7 +3,105 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-use solana_pubkey::Pubkey;
+use sha2::{Digest, Sha256};
+
+/// A 32-byte Solana address.
+///
+/// Replaces `solana_pubkey::Pubkey`, which was pulled in for one operation:
+/// the off-curve check in `create_program_address`. It cost 43 transitive
+/// crates and forced this feature to Rust 1.89 through solana-address and
+/// solana-hash. Only the handful of methods this crate actually used are here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct Pubkey([u8; 32]);
+
+impl Pubkey {
+    #[must_use]
+    pub const fn new_from_array(b: [u8; 32]) -> Self {
+        Self(b)
+    }
+
+    /// Derive a program address from seeds and a bump, rejecting an on-curve
+    /// result.
+    ///
+    /// A program-derived address must have no corresponding private key, which
+    /// means the hash must NOT be a valid curve point. A bare SHA-256 lands on
+    /// the curve roughly half the time, and an on-curve "PDA" owns nothing, so
+    /// skipping this check would let a wrong bump or a drifted layout write a
+    /// garbage authority into the registry as though it were real.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(OnCurve)` when the derived point is on the curve.
+    pub fn create_program_address(seeds: &[&[u8]], program_id: &Self) -> Result<Self, OnCurve> {
+        let mut h = Sha256::new();
+        for seed in seeds {
+            h.update(seed);
+        }
+        h.update(program_id.as_ref());
+        h.update(b"ProgramDerivedAddress");
+        let bytes: [u8; 32] = h.finalize().into();
+
+        // decompress() returning Some means the bytes ARE a curve point, so a
+        // private key could exist for them: not a valid PDA.
+        if curve25519_dalek::edwards::CompressedEdwardsY(bytes)
+            .decompress()
+            .is_some()
+        {
+            return Err(OnCurve);
+        }
+        Ok(Self(bytes))
+    }
+
+    /// Search bumps from 255 downward for the first off-curve address.
+    ///
+    /// Used where the bump is not stored on chain, e.g. Metaplex metadata.
+    ///
+    /// # Panics
+    ///
+    /// Panics if no bump in 0..=255 yields an off-curve address, which is
+    /// cryptographically not expected to occur.
+    #[must_use]
+    pub fn find_program_address(seeds: &[&[u8]], program_id: &Self) -> (Self, u8) {
+        for bump in (0..=u8::MAX).rev() {
+            let mut with_bump: Vec<&[u8]> = seeds.to_vec();
+            let b = [bump];
+            with_bump.push(&b);
+            if let Ok(pk) = Self::create_program_address(&with_bump, program_id) {
+                return (pk, bump);
+            }
+        }
+        unreachable!("no off-curve bump found")
+    }
+}
+
+/// The derived address is a curve point, so it is not a valid program address.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OnCurve;
+
+impl AsRef<[u8]> for Pubkey {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for Pubkey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", bs58::encode(&self.0).into_string())
+    }
+}
+
+impl std::str::FromStr for Pubkey {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let v = bs58::decode(s)
+            .into_vec()
+            .map_err(|e| format!("invalid base58: {e}"))?;
+        let b: [u8; 32] = v
+            .try_into()
+            .map_err(|_| format!("expected 32 bytes, got a different length for {s:?}"))?;
+        Ok(Self(b))
+    }
+}
 
 pub const SPL_STAKE_POOL: &str = "SPoo1Ku8WFXoNDMHPsrGSTSG1Y47rzgn41SLUNakuHy";
 pub const SANCTUM_SPL: &str = "SP12tWFxD9oJsVWNavTTBZvMbA6gkAmxtVgxdqvyvhY";

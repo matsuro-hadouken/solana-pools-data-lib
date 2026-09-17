@@ -2,7 +2,7 @@
 //!
 //! This module contains the embedded list of known stake pool authorities
 //! and provides utilities for working with pool information.
-//! Provenance: https://api.mainnet-beta.solana.com slot 447659744 epoch 1036, --min-sol 1, --unnamed-min-sol 5000, sanctum-lst-list d0beb503dca1d1c6380386da47a79a259324f436b0d6a8e65dcbbc5dcd7ad74b, 238 pools
+//! Provenance: https://api.mainnet-beta.solana.com slot 447723188 epoch 1036, --min-sol 1, --unnamed-min-sol 5000, sanctum-lst-list d0beb503dca1d1c6380386da47a79a259324f436b0d6a8e65dcbbc5dcd7ad74b, 238 pools
 
 use once_cell::sync::Lazy;
 use std::collections::HashMap;

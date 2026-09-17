@@ -222,18 +222,27 @@ Reads the current `src/pools.rs` first, to recover existing authority-to-name bi
 the MANUAL block, then rewrites it.
 
 **Dependencies, MSRV-gated.** The library's true floor is **1.82**, and the `discover`
-feature's is **1.89**. Both were established by compiling, not by reading declared MSRVs —
+feature's was **1.89** until `solana-pubkey` was dropped; it is now 1.82 too.
+Both were established by compiling, not by reading declared MSRVs —
 which turned out to be wrong in both directions:
 
 | Config | Floor | What sets it |
 |---|---|---|
 | default | 1.82 | `icu_*` 2.0 via `reqwest -> url -> idna`. 1.81 fails, 1.82 builds. |
-| `--features discover` | 1.89 | `solana-address` 2.7 / `solana-hash` 4.6. 1.85 fails, 1.93 builds. |
+| `--features discover` | 1.82 | Was 1.89 via `solana-address` 2.7 / `solana-hash` 4.6. Dropping `solana-pubkey` for `sha2` + `curve25519-dalek` (MSRV 1.60) removed the split. |
 
+`solana-pubkey` was used for exactly one operation: the off-curve check inside
+`create_program_address`. It cost 43 transitive crates, about a dozen of them
+solana, and forced this feature to 1.89. `sha2` + `curve25519-dalek` +
+`bs58` perform the same check in roughly 13 crates with no solana dependency at
+all, and every one of the 271 authorities re-derives bit-identically. The
+118-of-253 on-curve rejection test carried over unchanged.
+
+Historical note, since the reasoning below drove an earlier decision:
 `solana-pubkey` 3.0.0 *declares* 1.81, but its transitive deps demand 1.89 — and an
 intermediate crate (`wincode` 0.6.1) needs `edition2024`, which a pre-1.85 Cargo cannot even
 parse. Host-side `create_program_address` additionally sits behind the `curve25519` feature.
-A plain dev-dependency would drag every consumer from 1.82 to 1.89.
+A plain dev-dependency would have dragged every consumer from 1.82 to 1.89.
 
 So they become *optional* dependencies behind a feature, and the example requires it:
 
