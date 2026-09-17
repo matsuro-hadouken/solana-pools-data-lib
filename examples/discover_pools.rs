@@ -18,6 +18,11 @@ use std::time::Duration;
 const SANCTUM_LIST: &str =
     "https://raw.githubusercontent.com/igneous-labs/sanctum-lst-list/master/sanctum-lst-list.toml";
 const STAKE_PROGRAM: &str = "Stake11111111111111111111111111111111111111";
+/// Metaplex Token Metadata. Names LSTs that never applied to the Sanctum list —
+/// which is curated and opt-in, so it misses substantial pools regardless of
+/// size. Metaplex is permissionless and written by the mint authority, i.e. the
+/// pool itself, so it is the same trust level as Sanctum, not a weaker one.
+const MPL_TOKEN_METADATA: &str = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
 /// Slots are ~400ms, so this is a handful of them — enough that `--verify`'s
 /// second look at an empty authority is a genuinely different read of the chain
 /// rather than the same one repeated.
@@ -115,6 +120,13 @@ async fn main() -> Result<(), BoxErr> {
     // 5% sits in the empty band between those, catching 16 of 17 modelled
     // truncation scenarios with effectively no false-positive exposure.
     let mut max_shrink_pct = 5.0f64;
+    // A pool with no upstream name can only be given a placeholder, and the
+    // freeze rule makes that placeholder a permanent public API key. Minting one
+    // for dust is a decision that cannot be undone, so an unnamed pool is left
+    // out until a name appears upstream. The exception is size: past this
+    // threshold, missing the pool entirely is worse than carrying an ugly name,
+    // so it is admitted with a TODO for a human.
+    let mut unnamed_min_sol = 10_000.0f64;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -126,6 +138,17 @@ async fn main() -> Result<(), BoxErr> {
                     .map_err(|_| format!("--max-shrink-pct: {v:?} is not a number"))?;
                 if !max_shrink_pct.is_finite() || !(0.0..=100.0).contains(&max_shrink_pct) {
                     return Err(format!("--max-shrink-pct: {v:?} must be between 0 and 100").into());
+                }
+            }
+            "--unnamed-min-sol" => {
+                let v = args.next().ok_or("--unnamed-min-sol needs a value")?;
+                unnamed_min_sol = v
+                    .parse()
+                    .map_err(|_| format!("--unnamed-min-sol: {v:?} is not a number"))?;
+                if !unnamed_min_sol.is_finite() || unnamed_min_sol < 0.0 {
+                    return Err(
+                        format!("--unnamed-min-sol: {v:?} is not a usable threshold").into()
+                    );
                 }
             }
             "--min-sol" => {
@@ -142,7 +165,7 @@ async fn main() -> Result<(), BoxErr> {
             other => {
                 return Err(format!(
                     "unrecognized argument {other:?}; expected `--min-sol <SOL>`, \
-                     `--max-shrink-pct <PCT>` and/or `--verify`"
+                     `--unnamed-min-sol <SOL>`, `--max-shrink-pct <PCT>` and/or `--verify`"
                 )
                 .into())
             }
@@ -201,6 +224,12 @@ async fn main() -> Result<(), BoxErr> {
 
     // 2. Derive authorities. Pre-threshold set is what bootstrap classifies against.
     let mut cohorts: HashMap<&str, Vec<Candidate>> = HashMap::new();
+    // (authority, mint) for pools the Sanctum list does not name. Collected
+    // across all three programs so the Metaplex lookups batch into one pass.
+    let mut unnamed_mints: Vec<(String, String)> = Vec::new();
+    // Needed after the Metaplex pass, to decide whether a still-unnamed pool is
+    // big enough to admit anyway.
+    let mut sol_by_authority: HashMap<String, f64> = HashMap::new();
     let mut all_derived: HashSet<String> = HashSet::new();
     let (sanctum, sanctum_rev) = fetch_sanctum(&http).await?;
 
@@ -232,16 +261,88 @@ async fn main() -> Result<(), BoxErr> {
                 .cloned()
                 .map(|(n, s)| (Some(n), s))
                 .unwrap_or((None, None));
+            if name.is_none() {
+                // Remember the mint so Metaplex can fill it in once every cohort
+                // is built and the lookups can batch.
+                unnamed_mints.push((authority.clone(), sp.mint.to_string()));
+            }
+            sol_by_authority.insert(authority.clone(), total_sol);
             cohort.push(Candidate {
                 authority,
                 pool: sp.pool.to_string(),
-                sanctum_name: name,
-                sanctum_symbol: symbol,
+                upstream_name: name,
+                upstream_symbol: symbol,
                 stale,
                 verify_empty: false,
             });
         }
         cohorts.insert(program, cohort);
+    }
+
+    // Second naming source. The Sanctum list is curated and opt-in, so it names
+    // only pools that applied — it misses substantial ones regardless of size.
+    // Every pool left unnamed becomes a permanent `unnamed_*` public API key
+    // under the freeze rule, and that cannot be undone once published, so
+    // leaving a nameable pool unnamed is a decision rather than a default.
+    if !unnamed_mints.is_empty() {
+        let mints: Vec<String> = unnamed_mints.iter().map(|(_, m)| m.clone()).collect();
+        let metaplex = fetch_metaplex_names(&http, &rpc_url, &mints).await;
+        if !metaplex.is_empty() {
+            let by_authority: HashMap<&str, &String> = unnamed_mints
+                .iter()
+                .filter_map(|(a, m)| metaplex.get(m).map(|n| (a.as_str(), n)))
+                .collect();
+            for cohort in cohorts.values_mut() {
+                for c in cohort.iter_mut() {
+                    if c.upstream_name.is_none() {
+                        if let Some(name) = by_authority.get(c.authority.as_str()) {
+                            c.upstream_name = Some((*name).clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Withhold pools that no upstream source names and that are not large enough
+    // to be worth a placeholder. They are simply not candidates: nothing is
+    // retired, because they were never in the registry. A later run picks them up
+    // the moment Sanctum or Metaplex names them, or they cross the size bar.
+    let mut withheld = 0usize;
+    let mut withheld_sol = 0.0f64;
+    for cohort in cohorts.values_mut() {
+        cohort.retain(|c| {
+            // Test whether a usable NAME results, not merely whether upstream
+            // returned a string. A name that strips to nothing ("Wrapped SOL")
+            // yields Slug::Unusable, and assign_names then falls back to a
+            // placeholder anyway, so admitting it here just mints the permanent
+            // key this gate exists to avoid.
+            let nameable = c
+                .upstream_symbol
+                .as_deref()
+                .and_then(alias_for)
+                .is_some()
+                || matches!(
+                    c.upstream_name.as_deref().map(slugify),
+                    Some(Slug::Clean(_) | Slug::Suspicious { .. })
+                );
+            if nameable {
+                return true;
+            }
+            let sol = sol_by_authority.get(&c.authority).copied().unwrap_or(0.0);
+            if sol >= unnamed_min_sol {
+                return true;
+            }
+            withheld += 1;
+            withheld_sol += sol;
+            false
+        });
+    }
+    if withheld > 0 {
+        eprintln!(
+            "withheld {withheld} unnamed pools under {unnamed_min_sol} SOL ({withheld_sol:.1} SOL \
+             total); they return automatically once named or once larger"
+        );
     }
 
     // First run: moves the derivable entries out of MANUAL into GENERATED.
@@ -727,6 +828,89 @@ async fn live_stake_sol(http: &reqwest::Client, url: &str, authority: &str) -> R
 /// for naming — and if the upstream list ever reshapes partially, the affected
 /// pools would take permanent `unnamed_*` bindings while the non-empty check
 /// above still passed. Require what each use actually needs.
+/// Display names from Metaplex token metadata, for mints the Sanctum list does
+/// not cover.
+///
+/// Every `unnamed_*` entry is a permanent public API key under the freeze rule,
+/// so leaving a nameable pool unnamed is not a neutral default — it is a
+/// decision that cannot be undone later. Sanctum named 172 of 261 pools;
+/// Metaplex covers most of the rest.
+///
+/// Failure here is soft: a mint with no metadata account, or metadata we cannot
+/// decode, simply stays unnamed. That is the status quo, not a regression, so it
+/// must never abort a run.
+async fn fetch_metaplex_names(
+    http: &reqwest::Client,
+    rpc: &str,
+    mints: &[String],
+) -> HashMap<String, String> {
+    let mpl = match Pubkey::from_str(MPL_TOKEN_METADATA) {
+        Ok(p) => p,
+        Err(_) => return HashMap::new(),
+    };
+    // PDA -> mint, so a returned account can be attributed back.
+    let mut pda_to_mint: HashMap<String, String> = HashMap::new();
+    for m in mints {
+        if let Ok(mint) = Pubkey::from_str(m) {
+            let (pda, _) = Pubkey::find_program_address(
+                &[b"metadata", mpl.as_ref(), mint.as_ref()],
+                &mpl,
+            );
+            pda_to_mint.insert(pda.to_string(), m.clone());
+        }
+    }
+
+    let keys: Vec<String> = pda_to_mint.keys().cloned().collect();
+    let mut out = HashMap::new();
+    // getMultipleAccounts caps at 100 keys per call.
+    for chunk in keys.chunks(100) {
+        let body = json!({
+            "jsonrpc": "2.0", "id": 1, "method": "getMultipleAccounts",
+            "params": [chunk, {"encoding": "base64"}]
+        });
+        let Ok(resp) = http.post(rpc).json(&body).send().await else { continue };
+        let Ok(v) = resp.json::<Value>().await else { continue };
+        let Some(values) = v["result"]["value"].as_array() else { continue };
+        for (key, val) in chunk.iter().zip(values) {
+            let Some(encoded) = val["data"][0].as_str() else { continue };
+            let Ok(raw) = b64(encoded) else { continue };
+            let Some(name) = parse_metaplex_name(&raw) else { continue };
+            if let Some(mint) = pda_to_mint.get(key) {
+                out.insert(mint.clone(), name);
+            }
+        }
+    }
+    eprintln!(
+        "metaplex: named {} of {} mints the sanctum list did not cover",
+        out.len(),
+        mints.len()
+    );
+    out
+}
+
+/// The `name` field of a Metaplex Token Metadata account.
+///
+/// Layout: key(1) + update_authority(32) + mint(32), then borsh strings for
+/// name, symbol, uri. Bounds-checked at every step — this decodes attacker-
+/// adjacent data, since anyone can create a mint and its metadata.
+fn parse_metaplex_name(raw: &[u8]) -> Option<String> {
+    const HEADER: usize = 1 + 32 + 32;
+    if raw.len() < HEADER + 4 {
+        return None;
+    }
+    let len = u32::from_le_bytes(raw[HEADER..HEADER + 4].try_into().ok()?) as usize;
+    // Metaplex pads name to 32 bytes; anything far larger is not a name we want
+    // turned into a permanent API key.
+    if len == 0 || len > 200 || HEADER + 4 + len > raw.len() {
+        return None;
+    }
+    let name = String::from_utf8_lossy(&raw[HEADER + 4..HEADER + 4 + len])
+        .trim_end_matches('\0')
+        .trim()
+        .to_string();
+    (!name.is_empty()).then_some(name)
+}
+
 async fn fetch_sanctum(http: &reqwest::Client) -> Result<(SanctumNames, Option<String>), BoxErr> {
     let resp = http.get(SANCTUM_LIST).send().await?.error_for_status()?;
     let revision = resp
@@ -799,8 +983,8 @@ mod tests {
         Candidate {
             authority: authority.into(),
             pool: format!("Pool{authority}"),
-            sanctum_name: Some("Phantom Staked SOL".into()),
-            sanctum_symbol: None,
+            upstream_name: Some("Phantom Staked SOL".into()),
+            upstream_symbol: None,
             stale: false,
             verify_empty: false,
         }

@@ -112,8 +112,8 @@ const BOILERPLATE: &[&str] = &[
     "solana", "sol",
 ];
 
-pub fn slugify(sanctum_name: &str) -> Slug {
-    let lower = sanctum_name.trim().to_lowercase();
+pub fn slugify(upstream_name: &str) -> Slug {
+    let lower = upstream_name.trim().to_lowercase();
     let mut core = lower.as_str();
     let mut stripped = false;
     let mut risky = false;
@@ -162,7 +162,7 @@ pub fn slugify(sanctum_name: &str) -> Slug {
     }
     // A risky strip that left a single short token deserves a second look.
     if stripped && risky && !slug.contains('_') && slug.len() <= 5 {
-        return Slug::Suspicious { slug, original: sanctum_name.to_string() };
+        return Slug::Suspicious { slug, original: upstream_name.to_string() };
     }
     Slug::Clean(slug)
 }
@@ -353,8 +353,8 @@ pub fn promote_derivable(reg: &mut Registry, derived: &HashSet<String>) {
 pub struct Candidate {
     pub authority: String,
     pub pool: String,
-    pub sanctum_name: Option<String>,
-    pub sanctum_symbol: Option<String>,
+    pub upstream_name: Option<String>,
+    pub upstream_symbol: Option<String>,
     /// The pool's cached `total_lamports` is more than 10 epochs behind. A
     /// brand-new pool in this state had its SOL total re-measured live before it
     /// cleared `--min-sol`; a pool already in the registry kept its cached value
@@ -478,11 +478,11 @@ pub fn assign_names(reg: &Registry, candidates: &[Candidate]) -> Registry {
 
         let mut note = None;
         let base = c
-            .sanctum_symbol
+            .upstream_symbol
             .as_deref()
             .and_then(alias_for)
             .map(String::from)
-            .or_else(|| match c.sanctum_name.as_deref().map(slugify) {
+            .or_else(|| match c.upstream_name.as_deref().map(slugify) {
                 Some(Slug::Clean(s)) => Some(s),
                 Some(Slug::Suspicious { slug, original }) => {
                     note = Some(format!("verify: from {original:?}"));
@@ -935,8 +935,13 @@ mod tests {
             "GENERATED collapsed to {}",
             r.generated.len()
         );
+        // 271 today: 33 manual + 238 generated. Lower than the 294 this floor was
+        // first written against, because unnamed pools under --unnamed-min-sol
+        // are now withheld rather than given a permanent placeholder name. The
+        // floor guards against a section silently emptying, so it tracks the
+        // intended size rather than pinning it.
         assert!(
-            r.manual.len() + r.generated.len() + r.retired.len() >= 290,
+            r.manual.len() + r.generated.len() + r.retired.len() >= 250,
             "registry lost entries: {} total",
             r.manual.len() + r.generated.len() + r.retired.len()
         );
@@ -1034,8 +1039,8 @@ mod tests {
         Candidate {
             authority: auth.into(),
             pool: pool.into(),
-            sanctum_name: name.map(String::from),
-            sanctum_symbol: None,
+            upstream_name: name.map(String::from),
+            upstream_symbol: None,
             stale: false,
             verify_empty: false,
         }
