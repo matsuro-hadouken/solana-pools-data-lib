@@ -1,6 +1,6 @@
 //! End-to-end tests against a local fake RPC, focused on RPC *cost*.
 //!
-//! The registry grew 61 -> 294 pools, and `fetch_all_pools` issues one
+//! The registry grew 61 -> 271 pools, and `fetch_all_pools` issues one
 //! `getProgramAccounts` per pool. On a rate-limited endpoint the thing that
 //! hurts is request COUNT, so these tests pin it: N pools must cost exactly N
 //! requests, and a failing pool must not retry more than the configured budget.
@@ -86,7 +86,10 @@ fn spawn_fake_rpc(body_for: impl Fn(&str) -> String + Send + 'static) -> FakeRpc
 fn id_of(req: &str) -> u64 {
     req.split("\"id\":")
         .nth(1)
-        .and_then(|s| s.split(|c: char| !c.is_ascii_digit()).find(|t| !t.is_empty()))
+        .and_then(|s| {
+            s.split(|c: char| !c.is_ascii_digit())
+                .find(|t| !t.is_empty())
+        })
         .and_then(|s| s.parse().ok())
         .unwrap_or(1)
 }
@@ -99,7 +102,7 @@ fn empty_result(req: &str) -> String {
 async fn n_pools_cost_exactly_n_requests() {
     // The load guarantee that matters on a rate-limited endpoint: no hidden
     // fan-out, no per-pool extra round trip. If this ever regresses, a full
-    // 294-pool refresh silently multiplies.
+    // 271-pool refresh silently multiplies.
     let fake = spawn_fake_rpc(empty_result);
     let client = PoolsDataClient::builder()
         .rate_limit(1000)
@@ -133,7 +136,10 @@ async fn reserve_only_pool_succeeds_end_to_end_with_empty_data() {
         .and_then(PoolsDataClient::from_config)
         .expect("client");
 
-    let out = client.fetch_pools(&["jito"]).await.expect("empty must not be an error");
+    let out = client
+        .fetch_pools(&["jito"])
+        .await
+        .expect("empty must not be an error");
     let pool = out.get("jito").expect("pool present");
 
     assert!(pool.stake_accounts.is_empty());
@@ -141,7 +147,10 @@ async fn reserve_only_pool_succeeds_end_to_end_with_empty_data() {
     assert_eq!(pool.statistics.total_lamports, 0);
     assert_eq!(pool.statistics.validator_count, 0);
     assert!(pool.validator_distribution.is_empty());
-    assert_eq!(pool.authority, "6iQKfEyhr3bZMotVkW6beNZz5CPAkiwvgV2CTje9pVSS");
+    assert_eq!(
+        pool.authority,
+        "6iQKfEyhr3bZMotVkW6beNZz5CPAkiwvgV2CTje9pVSS"
+    );
 }
 
 #[tokio::test]
@@ -241,7 +250,7 @@ fn spawn_partial_failure_rpc(fail_for: &'static str) -> FakeRpc {
 #[tokio::test]
 async fn fetch_pools_hides_partial_failure_but_strict_does_not() {
     // The hazard: fetch_pools returns Ok when ANY pool succeeds and drops the
-    // rest. On a 429-ing endpoint a 294-pool refresh can return one row and
+    // rest. On a 429-ing endpoint a 271-pool refresh can return one row and
     // still look successful. A writer treating "absent" as "delete" would then
     // wipe most of a table.
     const JITO_AUTH: &str = "6iQKfEyhr3bZMotVkW6beNZz5CPAkiwvgV2CTje9pVSS";
@@ -255,7 +264,10 @@ async fn fetch_pools_hides_partial_failure_but_strict_does_not() {
         .build(&fake.url)
         .and_then(PoolsDataClient::from_config)
         .expect("client");
-    let lenient = client.fetch_pools(&names).await.expect("lenient returns Ok");
+    let lenient = client
+        .fetch_pools(&names)
+        .await
+        .expect("lenient returns Ok");
     assert_eq!(lenient.len(), 2, "one pool silently vanished");
     assert!(!lenient.contains_key("jito"));
 
@@ -294,7 +306,10 @@ async fn strict_returns_all_pools_when_none_fail() {
         .expect("client");
 
     let names = ["jito", "marinade", "blazestake"];
-    let out = client.fetch_pools_strict(&names).await.expect("all succeeded");
+    let out = client
+        .fetch_pools_strict(&names)
+        .await
+        .expect("all succeeded");
     assert_eq!(out.len(), names.len());
     assert_eq!(
         fake.hits.load(Ordering::SeqCst),
@@ -323,7 +338,10 @@ async fn strict_rejects_a_request_naming_a_pool_that_does_not_exist() {
         .expect_err("an unknown name must fail the whole request");
 
     let msg = err.to_string();
-    assert!(msg.contains("jtoi"), "error should name the bad pool, got: {msg}");
+    assert!(
+        msg.contains("jtoi"),
+        "error should name the bad pool, got: {msg}"
+    );
     assert_eq!(
         fake.hits.load(Ordering::SeqCst),
         0,
@@ -335,7 +353,7 @@ async fn strict_rejects_a_request_naming_a_pool_that_does_not_exist() {
 async fn a_redirecting_endpoint_cannot_multiply_requests() {
     // reqwest follows up to 10 redirects by default, which multiplies requests
     // BELOW the layer the other tests count: they saw "1 request per pool" while
-    // the wire saw 11 (measured). A 294-pool refresh would become 3,234 requests
+    // the wire saw 11 (measured). A 271-pool refresh would become 2,981 requests
     // before retries compound it. Realistic triggers are mundane — a provider
     // domain move, an http->https upgrade, a trailing-slash redirect.
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
@@ -398,7 +416,10 @@ async fn a_negative_lockup_timestamp_does_not_break_the_pool() {
     for ts in ["0", "-1", "-62135596800"] {
         let body = stake_account_json(ts);
         let fake = spawn_fake_rpc(move |req| {
-            format!(r#"{{"jsonrpc":"2.0","id":{},"result":[{body}]}}"#, id_of(req))
+            format!(
+                r#"{{"jsonrpc":"2.0","id":{},"result":[{body}]}}"#,
+                id_of(req)
+            )
         });
         let client = PoolsDataClient::builder()
             .rate_limit(1000)
@@ -440,7 +461,10 @@ async fn optional_rpc_fields_do_not_break_the_pool_when_omitted() {
         assert_ne!(body, full, "fixture edit for {drop_field} did not apply");
 
         let fake = spawn_fake_rpc(move |req| {
-            format!(r#"{{"jsonrpc":"2.0","id":{},"result":[{body}]}}"#, id_of(req))
+            format!(
+                r#"{{"jsonrpc":"2.0","id":{},"result":[{body}]}}"#,
+                id_of(req)
+            )
         });
         let client = PoolsDataClient::builder()
             .rate_limit(1000)
@@ -474,7 +498,10 @@ async fn impossible_balances_are_rejected_not_folded_into_totals() {
         r#""lamports":18446744073709551615"#,
     );
     let fake = spawn_fake_rpc(move |req| {
-        format!(r#"{{"jsonrpc":"2.0","id":{},"result":[{huge}]}}"#, id_of(req))
+        format!(
+            r#"{{"jsonrpc":"2.0","id":{},"result":[{huge}]}}"#,
+            id_of(req)
+        )
     });
     let client = PoolsDataClient::builder()
         .rate_limit(1000)
@@ -499,7 +526,7 @@ async fn a_permanent_error_is_not_retried() {
     // The error type has always classified what is worth retrying, but the
     // verdict was only read AFTER the loop spent its whole budget. A
     // deterministic failure (here invalid-params, -32602) therefore cost
-    // 1+retry_attempts requests per pool — across 294 pools that turns one
+    // 1+retry_attempts requests per pool — across 271 pools that turns one
     // permanent mistake into hundreds of pointless requests against an endpoint
     // that is usually already rate-limiting.
     let fake = spawn_fake_rpc(|req| {

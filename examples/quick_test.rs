@@ -51,7 +51,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
                 // Show top validators
                 let mut validators: Vec<_> = pool_data.validator_distribution.iter().collect();
-                validators.sort_by(|a, b| b.1.total_delegated.cmp(&a.1.total_delegated));
+                validators.sort_by_key(|v| std::cmp::Reverse(v.1.total_delegated));
 
                 println!("   Top 3 Validators:");
                 for (i, (validator, stake)) in validators.iter().take(3).enumerate() {

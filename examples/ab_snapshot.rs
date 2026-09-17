@@ -4,14 +4,14 @@
 //! to a database or any remote service. Use it to diff the new registry's output
 //! against your backend before deploying.
 //!
-//!   # everything the new code would produce (294 pools)
+//!   # everything the new code would produce (271 pools)
 //!   cargo run --example ab_snapshot -- --all --out snapshot-new.json
 //!
 //!   # only the 61 names that existed before auto-discovery
 //!   cargo run --example ab_snapshot -- --names-file legacy61.txt --out snapshot-legacy.json
 //!
 //! Set SOLANA_RPC_URL to use a private endpoint; the public one will rate-limit
-//! badly across ~294 getProgramAccounts calls.
+//! badly across ~271 getProgramAccounts calls.
 //!
 //! `fetched_at` is normalised to the epoch so a diff shows real data changes
 //! rather than timestamps.
@@ -37,8 +37,8 @@ async fn main() -> Result<()> {
         std::process::exit(2);
     }
 
-    let rpc_url =
-        std::env::var("SOLANA_RPC_URL").unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".into());
+    let rpc_url = std::env::var("SOLANA_RPC_URL")
+        .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".into());
 
     // Owned names first, then borrow — fetch_pools takes &[&str].
     let owned: Vec<String> = match &names_file {
@@ -86,7 +86,10 @@ async fn main() -> Result<()> {
     }
 
     rows.sort_by_key(|r| std::cmp::Reverse(r.3));
-    println!("{:<26} {:>7} {:>16} {:>6}  authority", "pool", "accts", "delegated SOL", "vals");
+    println!(
+        "{:<26} {:>7} {:>16} {:>6}  authority",
+        "pool", "accts", "delegated SOL", "vals"
+    );
     for (name, auth, accts, lamports, vals) in &rows {
         println!(
             "{name:<26} {accts:>7} {:>16.3} {vals:>6}  {auth}",

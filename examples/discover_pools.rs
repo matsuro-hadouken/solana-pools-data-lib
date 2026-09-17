@@ -9,8 +9,8 @@
 //! exactly the input it needs.
 
 use serde_json::{json, Value};
-use solana_pools_data_lib::discovery::*;
 use solana_pools_data_lib::discovery::Pubkey;
+use solana_pools_data_lib::discovery::*;
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::time::Duration;
@@ -107,7 +107,11 @@ async fn main() -> Result<(), BoxErr> {
     // Ignoring them would let `--verfiy` skip the safety gate in silence, and a
     // fat-fingered `--min-sol 1o` fall back to the default — on a tool whose
     // output is permanent public API surface, both deserve a stop.
-    let (mut min_sol, mut verify) = (1.0f64, false);
+    // Verification is ON by default. It queries every newly derived authority
+    // and withholds any that owns nothing, which is the only check that catches
+    // a wrong PDA before its name is frozen into the registry forever. Skipping
+    // it is possible but has to be asked for, and the run says so loudly.
+    let (mut min_sol, mut verify) = (1.0f64, true);
     // Guards against a truncated-but-successful discovery response: an RPC or
     // proxy that returns a valid, non-empty, partial account array would retire
     // every omitted pool. Only a fully empty program response aborts otherwise.
@@ -130,7 +134,9 @@ async fn main() -> Result<(), BoxErr> {
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            // Accepted for compatibility; verification is the default now.
             "--verify" => verify = true,
+            "--no-verify" => verify = false,
             "--max-shrink-pct" => {
                 let v = args.next().ok_or("--max-shrink-pct needs a value")?;
                 max_shrink_pct = v
@@ -147,7 +153,7 @@ async fn main() -> Result<(), BoxErr> {
                     .map_err(|_| format!("--unnamed-min-sol: {v:?} is not a number"))?;
                 if !unnamed_min_sol.is_finite() || unnamed_min_sol < 0.0 {
                     return Err(
-                        format!("--unnamed-min-sol: {v:?} is not a usable threshold").into()
+                        format!("--unnamed-min-sol: {v:?} is not a usable threshold").into(),
                     );
                 }
             }
@@ -165,12 +171,20 @@ async fn main() -> Result<(), BoxErr> {
             other => {
                 return Err(format!(
                     "unrecognized argument {other:?}; expected `--min-sol <SOL>`, \
-                     `--unnamed-min-sol <SOL>`, `--max-shrink-pct <PCT>` and/or `--verify`"
+                     `--unnamed-min-sol <SOL>`, `--max-shrink-pct <PCT>` and/or `--no-verify`"
                 )
                 .into())
             }
         }
     }
+    if !verify {
+        eprintln!(
+            "WARNING: --no-verify. Newly derived authorities will NOT be checked \
+             against the chain, so a wrong PDA can be written and its name frozen \
+             permanently. Use this only when the RPC cannot take the extra reads."
+        );
+    }
+
     let rpc_url = std::env::var("SOLANA_RPC_URL")
         .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
     let out_path = "src/pools.rs";
@@ -317,11 +331,7 @@ async fn main() -> Result<(), BoxErr> {
             // yields Slug::Unusable, and assign_names then falls back to a
             // placeholder anyway, so admitting it here just mints the permanent
             // key this gate exists to avoid.
-            let nameable = c
-                .upstream_symbol
-                .as_deref()
-                .and_then(alias_for)
-                .is_some()
+            let nameable = c.upstream_symbol.as_deref().and_then(alias_for).is_some()
                 || matches!(
                     c.upstream_name.as_deref().map(slugify),
                     Some(Slug::Clean(_) | Slug::Suspicious { .. })
@@ -408,8 +418,9 @@ async fn main() -> Result<(), BoxErr> {
     // 4. Assign names, render, write atomically.
     let provenance = format!(
         "{} slot {slot} epoch {epoch}, --min-sol {min_sol}, \
-         --unnamed-min-sol {unnamed_min_sol}, sanctum-lst-list {}, {} pools",
+         --unnamed-min-sol {unnamed_min_sol}, {}, sanctum-lst-list {}, {} pools",
         endpoint_label(&rpc_url),
+        if verify { "verified" } else { "UNVERIFIED" },
         sanctum_rev.as_deref().unwrap_or("revision unknown"),
         candidates.len()
     );
@@ -444,7 +455,12 @@ async fn main() -> Result<(), BoxErr> {
                  nothing was written. Affected: {}{}. Re-run; if the loss is real, pass \
                  --max-shrink-pct {:.0} to accept it.",
                 retired.len(),
-                retired.iter().take(10).cloned().collect::<Vec<_>>().join(", "),
+                retired
+                    .iter()
+                    .take(10)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", "),
                 if retired.len() > 10 { ", …" } else { "" },
                 shrink.ceil()
             )
@@ -563,7 +579,7 @@ where
         }
     }
     // Require a meaningful cohort before concluding the derivation is broken.
-    // At 294 pools the steady state is one or two new pools per epoch, so
+    // At 271 pools the steady state is one or two new pools per epoch, so
     // `empty.len() == fresh` is trivially true whenever that single new pool
     // reads empty twice — which a lagging node or a proxy returning empty
     // arrays does routinely. That aborted the entire run, discarded the other
@@ -660,7 +676,10 @@ async fn rpc(
             .cloned()
             .ok_or_else(|| format!("{method}: response carried no result").into());
     }
-    Err(format!("{method}: still rate limited after 6 attempts; raise DISCOVER_RPC_DELAY_MS").into())
+    Err(
+        format!("{method}: still rate limited after 6 attempts; raise DISCOVER_RPC_DELAY_MS")
+            .into(),
+    )
 }
 
 /// Epoch and absolute slot, both out of the one `getEpochInfo` round trip the
@@ -761,7 +780,8 @@ async fn stake_accounts(
     authority: &str,
     manageable_only: bool,
 ) -> Result<Vec<Value>, BoxErr> {
-    let mut filters = vec![json!({"memcmp": {"offset": 12, "bytes": authority, "encoding": "base58"}})];
+    let mut filters =
+        vec![json!({"memcmp": {"offset": 12, "bytes": authority, "encoding": "base58"}})];
     if manageable_only {
         filters.push(json!({"memcmp": {"offset": 44, "bytes": authority, "encoding": "base58"}}));
     }
@@ -862,10 +882,8 @@ async fn fetch_metaplex_names(
     let mut pda_to_mint: HashMap<String, String> = HashMap::new();
     for m in mints {
         if let Ok(mint) = Pubkey::from_str(m) {
-            let (pda, _) = Pubkey::find_program_address(
-                &[b"metadata", mpl.as_ref(), mint.as_ref()],
-                &mpl,
-            );
+            let (pda, _) =
+                Pubkey::find_program_address(&[b"metadata", mpl.as_ref(), mint.as_ref()], &mpl);
             pda_to_mint.insert(pda.to_string(), m.clone());
         }
     }
@@ -899,14 +917,21 @@ async fn fetch_metaplex_names(
             }
         };
         let Some(values) = v["value"].as_array() else {
-            eprintln!("metaplex: chunk of {} mints returned no value array", chunk.len());
+            eprintln!(
+                "metaplex: chunk of {} mints returned no value array",
+                chunk.len()
+            );
             failed_chunks += 1;
             continue;
         };
         for (key, val) in chunk.iter().zip(values) {
-            let Some(encoded) = val["data"][0].as_str() else { continue };
+            let Some(encoded) = val["data"][0].as_str() else {
+                continue;
+            };
             let Ok(raw) = b64(encoded) else { continue };
-            let Some(name) = parse_metaplex_name(&raw) else { continue };
+            let Some(name) = parse_metaplex_name(&raw) else {
+                continue;
+            };
             if let Some(mint) = pda_to_mint.get(key) {
                 out.insert(mint.clone(), name);
             }
@@ -1087,17 +1112,24 @@ mod tests {
         // The whole point of --verify. `verify_empty` had no producer once
         // withholding replaced the blanket marking, so `EMPTY_NOTE` was
         // unreachable from a real run; this drives the loop main actually calls.
-        let counts: HashMap<&str, usize> =
-            [("KnownFull", 4usize), ("NewFull", 7)].into_iter().collect();
+        let counts: HashMap<&str, usize> = [("KnownFull", 4usize), ("NewFull", 7)]
+            .into_iter()
+            .collect();
         let asked = RefCell::new(Vec::new());
         let count = |a: String| {
             asked.borrow_mut().push(a.clone());
             std::future::ready(Ok(counts.get(a.as_str()).copied().unwrap_or(0)))
         };
 
-        let known: HashSet<String> =
-            ["KnownFull".to_string(), "KnownQuiet".to_string()].into_iter().collect();
-        let mut cohort = vec![cand("KnownFull"), cand("KnownQuiet"), cand("NewFull"), cand("NewEmpty")];
+        let known: HashSet<String> = ["KnownFull".to_string(), "KnownQuiet".to_string()]
+            .into_iter()
+            .collect();
+        let mut cohort = vec![
+            cand("KnownFull"),
+            cand("KnownQuiet"),
+            cand("NewFull"),
+            cand("NewEmpty"),
+        ];
 
         verify_cohort(&mut cohort, &known, "SPoo1", Duration::ZERO, count)
             .await
@@ -1114,13 +1146,25 @@ mod tests {
             .filter(|c| c.verify_empty)
             .map(|c| c.authority.as_str())
             .collect();
-        assert_eq!(marked, vec!["KnownQuiet"], "only the quiet existing entry is marked");
+        assert_eq!(
+            marked,
+            vec!["KnownQuiet"],
+            "only the quiet existing entry is marked"
+        );
 
         // Asymmetry of cost: withholding is a decision, so it is re-read at a
         // later slot; annotating is advisory, so it is not.
         let asked = asked.into_inner();
-        assert_eq!(asked.iter().filter(|a| *a == "KnownQuiet").count(), 1, "no retry for an existing entry");
-        assert_eq!(asked.iter().filter(|a| *a == "NewEmpty").count(), 2, "a new empty authority is re-read once");
+        assert_eq!(
+            asked.iter().filter(|a| *a == "KnownQuiet").count(),
+            1,
+            "no retry for an existing entry"
+        );
+        assert_eq!(
+            asked.iter().filter(|a| *a == "NewEmpty").count(),
+            2,
+            "a new empty authority is re-read once"
+        );
 
         // ...and the mark reaches the file a human reads.
         let mut reg = Registry::default();
@@ -1129,10 +1173,21 @@ mod tests {
             authority: "KnownQuiet".into(),
             note: None,
         });
-        reg.generated.push(Entry { name: "full".into(), authority: "KnownFull".into(), note: None });
+        reg.generated.push(Entry {
+            name: "full".into(),
+            authority: "KnownFull".into(),
+            note: None,
+        });
         let out = assign_names(&reg, &cohort);
-        let quiet = out.generated.iter().find(|e| e.authority == "KnownQuiet").unwrap();
-        assert_eq!(quiet.name, "phantom", "a live public name is never withdrawn");
+        let quiet = out
+            .generated
+            .iter()
+            .find(|e| e.authority == "KnownQuiet")
+            .unwrap();
+        assert_eq!(
+            quiet.name, "phantom",
+            "a live public name is never withdrawn"
+        );
         assert_eq!(quiet.note.as_deref(), Some("verify: no stake accounts"));
     }
 
@@ -1143,25 +1198,23 @@ mod tests {
         // written. Existing entries do not count towards it — they are only
         // annotated — or a program whose new pools are all quiet could never
         // abort behind a registry full of live ones.
-        // The cohort must also be big enough to be a signal. At 294 registered
+        // The cohort must also be big enough to be a signal. At 271 registered
         // pools the steady state is one or two new ones per epoch, so aborting
         // whenever "every new pool is empty" fires on a single quiet pool —
         // which a lagging node produces routinely. Three is the floor.
         let count = |_: String| std::future::ready(Ok(0usize));
         let known: HashSet<String> = ["Known".to_string()].into_iter().collect();
-        let mut cohort = vec![
-            cand("Known"),
-            cand("NewA"),
-            cand("NewB"),
-            cand("NewC"),
-        ];
+        let mut cohort = vec![cand("Known"), cand("NewA"), cand("NewB"), cand("NewC")];
 
         let err = verify_cohort(&mut cohort, &known, "SPoo1", Duration::ZERO, count)
             .await
             .unwrap_err()
             .to_string();
         assert!(err.contains("ABORT: all 3 new authorities"), "got: {err}");
-        assert!(err.contains("SPoo1"), "the abort must name the program, got: {err}");
+        assert!(
+            err.contains("SPoo1"),
+            "the abort must name the program, got: {err}"
+        );
     }
 
     #[tokio::test]

@@ -24,23 +24,33 @@ impl PoolStatisticsFull {
         for validator in &self.validators {
             for account in &validator.accounts {
                 summary.total_accounts += 1;
-                summary.total_lamports = summary.total_lamports.saturating_add(account.account_size_in_lamports);
+                summary.total_lamports = summary
+                    .total_lamports
+                    .saturating_add(account.account_size_in_lamports);
                 match account.account_state {
                     StakeState::Activating => {
                         summary.activating_accounts += 1;
-                        summary.activating_stake_lamports = summary.activating_stake_lamports.saturating_add(account.account_size_in_lamports);
+                        summary.activating_stake_lamports = summary
+                            .activating_stake_lamports
+                            .saturating_add(account.account_size_in_lamports);
                     }
                     StakeState::Active => {
                         summary.active_accounts += 1;
-                        summary.active_stake_lamports = summary.active_stake_lamports.saturating_add(account.account_size_in_lamports);
+                        summary.active_stake_lamports = summary
+                            .active_stake_lamports
+                            .saturating_add(account.account_size_in_lamports);
                     }
                     StakeState::Deactivating => {
                         summary.deactivating_accounts += 1;
-                        summary.deactivating_stake_lamports = summary.deactivating_stake_lamports.saturating_add(account.account_size_in_lamports);
+                        summary.deactivating_stake_lamports = summary
+                            .deactivating_stake_lamports
+                            .saturating_add(account.account_size_in_lamports);
                     }
                     StakeState::Inactive | StakeState::Waste | StakeState::Unknown => {
                         summary.deactivated_accounts += 1;
-                        summary.deactivated_stake_lamports = summary.deactivated_stake_lamports.saturating_add(account.account_size_in_lamports);
+                        summary.deactivated_stake_lamports = summary
+                            .deactivated_stake_lamports
+                            .saturating_add(account.account_size_in_lamports);
                     }
                 }
             }

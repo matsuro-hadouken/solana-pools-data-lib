@@ -193,6 +193,20 @@ struct RawDelegation {
 /// of magnitude of headroom above anything that can exist while still being far
 /// below u64::MAX (1.8e19). Its purpose is to catch a response that is wrong,
 /// not to cap a pool that is merely large.
+/// Ceiling on a single `getProgramAccounts` response body.
+///
+/// Nothing on chain bounds how many stake accounts name a given authority, and
+/// `authorized.staker` is attacker-settable, so a third party can plant
+/// accounts against any pool for rent alone. At roughly 745 bytes per account
+/// on the wire, 64 MiB is about 90k accounts: far above the largest real pool
+/// (1,392 accounts, ~1 MiB) and far below what would exhaust memory, since the
+/// body is buffered whole before being deserialized.
+///
+/// Exceeding it is a loud error rather than a truncation: a partial response
+/// would understate the pool, and an understated balance is worse than an
+/// absent one.
+const MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
+
 pub(crate) const MAX_PLAUSIBLE_LAMPORTS: u64 = 1_000_000_000_000_000_000;
 
 fn default_warmup_cooldown_rate() -> f64 {
@@ -224,7 +238,7 @@ impl RpcClient {
             .user_agent("pools-data-lib/0.1.0")
             // reqwest follows up to 10 redirects by default, which silently
             // multiplies requests below the layer that counts them: one pool's
-            // query becomes 11 HTTP requests (measured), so a 294-pool refresh
+            // query becomes 11 HTTP requests (measured), so a 271-pool refresh
             // becomes 3,234 before retries compound it. A JSON-RPC POST endpoint
             // has no legitimate reason to redirect, so surface it as an error
             // rather than paying for it.
@@ -304,7 +318,34 @@ impl RpcClient {
             });
         }
 
+        // Check the advertised length before buffering it. A pool with enough
+        // planted accounts would otherwise be read fully into memory and then
+        // into a Vec, several times its wire size, and under a strict refresh
+        // one such pool fails the whole run.
+        if let Some(len) = response.content_length() {
+            if len > MAX_RESPONSE_BYTES as u64 {
+                return Err(PoolsDataError::InvalidStakeData {
+                    message: format!(
+                        "stake accounts for authority {authority} returned {len} bytes, above the \
+                         {MAX_RESPONSE_BYTES} byte ceiling; refusing to buffer it"
+                    ),
+                });
+            }
+        }
+
         let response_text = response.text().await?;
+
+        // A chunked response carries no content-length, so the check above can
+        // be skipped entirely. Catch it after the fact rather than not at all.
+        if response_text.len() > MAX_RESPONSE_BYTES {
+            return Err(PoolsDataError::InvalidStakeData {
+                message: format!(
+                    "stake accounts for authority {authority} returned {} bytes, above the \
+                     {MAX_RESPONSE_BYTES} byte ceiling",
+                    response_text.len()
+                ),
+            });
+        }
 
         // Try to parse as RPC response
         let rpc_response: RpcResponse<Vec<RawStakeAccount>> = serde_json::from_str(&response_text)
@@ -356,7 +397,7 @@ impl RpcClient {
                     // remaining check (owner, executable, space, program type,
                     // stake type, the three string->u64 parses) is satisfied by
                     // definition for an account a getProgramAccounts query on
-                    // the stake program returned, and a live fetch of all 294
+                    // the stake program returned, and a live fetch of all 271
                     // pools produced zero hits. The real within-pool guarantee
                     // comes one step earlier, from decoding the whole array at
                     // once. This is the backstop for a shape that slips past
@@ -707,13 +748,12 @@ mod deser_fragility {
 
     /// 221 real accounts, captured 2026-09-16 from getProgramAccounts filtered on
     /// delegation.voter (offset 124) for QUANT7qKUEW4PS4eP9jq4K35rDHpgWkWcgjbW1CwnGJ.
-    const FIXTURE: &str =
-        include_str!("../tests/fixtures/stake_accounts_quant_2026-09-16.json");
+    const FIXTURE: &str = include_str!("../tests/fixtures/stake_accounts_quant_2026-09-16.json");
 
     fn parse(v: &Value) -> Result<usize> {
         let text = v.to_string();
-        let resp: RpcResponse<Vec<RawStakeAccount>> = serde_json::from_str(&text)
-            .map_err(|e| PoolsDataError::ParseError {
+        let resp: RpcResponse<Vec<RawStakeAccount>> =
+            serde_json::from_str(&text).map_err(|e| PoolsDataError::ParseError {
                 message: e.to_string(),
             })?;
         Ok(resp.result.map_or(0, |r| r.len()))
@@ -768,7 +808,10 @@ mod deser_fragility {
             .as_object_mut()
             .unwrap()
             .remove("warmupCooldownRate");
-        assert_eq!(parse(&v).expect("absent warmupCooldownRate must parse"), 221);
+        assert_eq!(
+            parse(&v).expect("absent warmupCooldownRate must parse"),
+            221
+        );
     }
 
     /// A present but wrong size still fails, so making space optional did not
@@ -777,8 +820,7 @@ mod deser_fragility {
     fn a_wrong_space_value_still_fails_validation() {
         let v = fixture();
         let text = v.to_string();
-        let resp: RpcResponse<Vec<RawStakeAccount>> =
-            serde_json::from_str(&text).expect("parses");
+        let resp: RpcResponse<Vec<RawStakeAccount>> = serde_json::from_str(&text).expect("parses");
         let mut accounts = resp.result.expect("has result");
         accounts[0].account.space = Some(199);
         assert!(RpcClient::validate_stake_account(&accounts[0]).is_err());

@@ -2,7 +2,7 @@
 //!
 //! This module contains the embedded list of known stake pool authorities
 //! and provides utilities for working with pool information.
-//! Provenance: https://api.mainnet-beta.solana.com slot 447723188 epoch 1036, --min-sol 1, --unnamed-min-sol 5000, sanctum-lst-list d0beb503dca1d1c6380386da47a79a259324f436b0d6a8e65dcbbc5dcd7ad74b, 238 pools
+//! Provenance: https://api.mainnet-beta.solana.com slot 447754504 epoch 1036, --min-sol 1, --unnamed-min-sol 5000, verified, sanctum-lst-list d0beb503dca1d1c6380386da47a79a259324f436b0d6a8e65dcbbc5dcd7ad74b, 238 pools
 
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -372,7 +372,11 @@ static POOLS_RETIRED: Lazy<Vec<PoolInfo>> = Lazy::new(|| {
 /// Every pool, active and retired. Retired entries stay here so existing
 /// pool names keep resolving.
 static POOLS_REGISTRY: Lazy<Vec<PoolInfo>> = Lazy::new(|| {
-    POOLS_ACTIVE.iter().chain(POOLS_RETIRED.iter()).cloned().collect()
+    POOLS_ACTIVE
+        .iter()
+        .chain(POOLS_RETIRED.iter())
+        .cloned()
+        .collect()
 });
 
 /// Pools that should actually be fetched. Excludes retired entries.
@@ -451,7 +455,7 @@ mod tests {
     #[test]
     fn test_pool_registry_not_empty() {
         assert!(!POOLS_REGISTRY.is_empty());
-        assert!(POOLS_REGISTRY.len() > 30); // 294 today: 33 manual + 261 generated
+        assert!(POOLS_REGISTRY.len() > 30); // 271 today: 33 manual + 238 generated
     }
 
     #[test]
@@ -522,17 +526,25 @@ mod tests {
         // Retiring a pool must never break an API key. It leaves fetch_all_pools,
         // but name lookup keeps working.
         for p in POOLS_RETIRED.iter() {
-            assert!(get_pool_by_name(&p.name).is_some(), "{} stopped resolving", p.name);
+            assert!(
+                get_pool_by_name(&p.name).is_some(),
+                "{} stopped resolving",
+                p.name
+            );
         }
     }
 
     #[test]
     fn active_pools_exclude_retired() {
-        let active: std::collections::HashSet<_> = get_active_pools().iter().map(|p| &p.name).collect();
+        let active: std::collections::HashSet<_> =
+            get_active_pools().iter().map(|p| &p.name).collect();
         for p in POOLS_RETIRED.iter() {
             assert!(!active.contains(&p.name), "{} should not be active", p.name);
         }
-        assert_eq!(get_all_pools().len(), get_active_pools().len() + POOLS_RETIRED.len());
+        assert_eq!(
+            get_all_pools().len(),
+            get_active_pools().len() + POOLS_RETIRED.len()
+        );
     }
 
     #[test]
@@ -541,7 +553,12 @@ mod tests {
         // overwrite and misattribute fetched stake accounts.
         let mut seen = std::collections::HashSet::new();
         for p in get_all_pools() {
-            assert!(seen.insert(&p.authority), "duplicate authority: {} ({})", p.authority, p.name);
+            assert!(
+                seen.insert(&p.authority),
+                "duplicate authority: {} ({})",
+                p.authority,
+                p.name
+            );
         }
     }
 }

@@ -18,7 +18,12 @@ async fn main() -> Result<()> {
         for validator in &stats.validators {
             println!("  Validator: {}", validator.validator_pubkey);
             for account in &validator.accounts {
-                println!("    Account: {} | State: {:?} | SOL: {}", account.account_pubkey, account.account_state, (account.account_size_in_lamports as f64 / 1_000_000_000.0));
+                println!(
+                    "    Account: {} | State: {:?} | SOL: {}",
+                    account.account_pubkey,
+                    account.account_state,
+                    (account.account_size_in_lamports as f64 / 1_000_000_000.0)
+                );
             }
         }
     }
@@ -35,6 +40,11 @@ async fn fetch_current_epoch(rpc_url: &str) -> Result<u64> {
     });
     let resp = client.post(rpc_url).json(&body).send().await?;
     let resp_json: serde_json::Value = resp.json().await?;
-    let epoch = resp_json["result"]["epoch"].as_u64().ok_or_else(|| PoolsDataError::ParseError { message: "No epoch in response".to_string() })?;
+    let epoch =
+        resp_json["result"]["epoch"]
+            .as_u64()
+            .ok_or_else(|| PoolsDataError::ParseError {
+                message: "No epoch in response".to_string(),
+            })?;
     Ok(epoch)
 }

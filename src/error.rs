@@ -103,7 +103,7 @@ impl PoolsDataError {
     ///
     /// The retry loop consults this before spending another attempt. Without it
     /// a permanent failure — invalid params, a parse error, a misconfigured URL —
-    /// costs the full retry budget per pool, which across a 294-pool refresh
+    /// costs the full retry budget per pool, which across a 271-pool refresh
     /// multiplies a deterministic failure into hundreds of pointless requests on
     /// an endpoint that is often already rate-limiting.
     #[must_use]
@@ -190,7 +190,7 @@ mod tests {
         // which is usually transport-adjacent — a proxy truncating JSON, an HTML
         // error page served with a 200, a body missing `result`. One backend
         // behind a load balancer can fail that while the next succeeds. A few
-        // wasted retries cost less than aborting a strict 294-pool refresh over
+        // wasted retries cost less than aborting a strict 271-pool refresh over
         // one transient bad response. A genuinely malformed on-chain account is
         // InvalidStakeData, asserted non-retryable below.
         let parse_error = PoolsDataError::ParseError {

@@ -5,7 +5,10 @@ use std::collections::HashMap;
 
 /// Calculate pool statistics from stake accounts and current epoch
 #[must_use]
-pub fn calculate_pool_statistics(stake_accounts: &[StakeAccountInfo], current_epoch: u64) -> PoolStatistics {
+pub fn calculate_pool_statistics(
+    stake_accounts: &[StakeAccountInfo],
+    current_epoch: u64,
+) -> PoolStatistics {
     let mut total_accounts = 0;
     let mut activating_accounts = 0;
     let mut active_accounts = 0;
@@ -23,7 +26,7 @@ pub fn calculate_pool_statistics(stake_accounts: &[StakeAccountInfo], current_ep
         if let Some(delegation) = &account.delegation {
             total_accounts += 1;
             validator_set.insert(&delegation.voter);
-            
+
             if delegation.activation_epoch > current_epoch {
                 // Stake is still activating (warming up)
                 activating_accounts += 1;
@@ -549,14 +552,14 @@ mod tests {
                     last_epoch_credits_cumulative: 0,
                     warmup_cooldown_rate: 0.25,
                 }),
-                authorized: StakeAuthorized { 
-                    staker: "staker1".to_string(), 
-                    withdrawer: "withdrawer1".to_string() 
+                authorized: StakeAuthorized {
+                    staker: "staker1".to_string(),
+                    withdrawer: "withdrawer1".to_string(),
                 },
-                lockup: StakeLockup { 
-                    unix_timestamp: 0, 
-                    epoch: 0, 
-                    custodian: "".to_string() 
+                lockup: StakeLockup {
+                    unix_timestamp: 0,
+                    epoch: 0,
+                    custodian: "".to_string(),
                 },
             },
             StakeAccountInfo {
@@ -571,14 +574,14 @@ mod tests {
                     last_epoch_credits_cumulative: 100,
                     warmup_cooldown_rate: 0.25,
                 }),
-                authorized: StakeAuthorized { 
-                    staker: "staker2".to_string(), 
-                    withdrawer: "withdrawer2".to_string() 
+                authorized: StakeAuthorized {
+                    staker: "staker2".to_string(),
+                    withdrawer: "withdrawer2".to_string(),
                 },
-                lockup: StakeLockup { 
-                    unix_timestamp: 0, 
-                    epoch: 0, 
-                    custodian: "".to_string() 
+                lockup: StakeLockup {
+                    unix_timestamp: 0,
+                    epoch: 0,
+                    custodian: "".to_string(),
                 },
             },
             StakeAccountInfo {
@@ -588,19 +591,19 @@ mod tests {
                 delegation: Some(StakeDelegation {
                     voter: "validator3".to_string(),
                     stake: 3000,
-                    activation_epoch: 30, // Past epoch
+                    activation_epoch: 30,    // Past epoch
                     deactivation_epoch: 120, // Future epoch - deactivating
                     last_epoch_credits_cumulative: 200,
                     warmup_cooldown_rate: 0.25,
                 }),
-                authorized: StakeAuthorized { 
-                    staker: "staker3".to_string(), 
-                    withdrawer: "withdrawer3".to_string() 
+                authorized: StakeAuthorized {
+                    staker: "staker3".to_string(),
+                    withdrawer: "withdrawer3".to_string(),
                 },
-                lockup: StakeLockup { 
-                    unix_timestamp: 0, 
-                    epoch: 0, 
-                    custodian: "".to_string() 
+                lockup: StakeLockup {
+                    unix_timestamp: 0,
+                    epoch: 0,
+                    custodian: "".to_string(),
                 },
             },
             StakeAccountInfo {
@@ -610,19 +613,19 @@ mod tests {
                 delegation: Some(StakeDelegation {
                     voter: "validator4".to_string(),
                     stake: 4000,
-                    activation_epoch: 20, // Past epoch
+                    activation_epoch: 20,   // Past epoch
                     deactivation_epoch: 80, // Past epoch - deactivated
                     last_epoch_credits_cumulative: 150,
                     warmup_cooldown_rate: 0.25,
                 }),
-                authorized: StakeAuthorized { 
-                    staker: "staker4".to_string(), 
-                    withdrawer: "withdrawer4".to_string() 
+                authorized: StakeAuthorized {
+                    staker: "staker4".to_string(),
+                    withdrawer: "withdrawer4".to_string(),
                 },
-                lockup: StakeLockup { 
-                    unix_timestamp: 0, 
-                    epoch: 0, 
-                    custodian: "".to_string() 
+                lockup: StakeLockup {
+                    unix_timestamp: 0,
+                    epoch: 0,
+                    custodian: "".to_string(),
                 },
             },
         ];
@@ -636,14 +639,14 @@ mod tests {
         assert_eq!(stats.active_accounts, 1); // activation_epoch=50 <= current_epoch=90, deactivation_epoch=u64::MAX
         assert_eq!(stats.deactivating_accounts, 1); // deactivation_epoch=120 > current_epoch=90
         assert_eq!(stats.deactivated_accounts, 1); // deactivation_epoch=80 <= current_epoch=90
-        
+
         // Verify lamports
         assert_eq!(stats.total_lamports, 10000);
         assert_eq!(stats.activating_stake_lamports, 1000);
         assert_eq!(stats.active_stake_lamports, 2000);
         assert_eq!(stats.deactivating_stake_lamports, 3000);
         assert_eq!(stats.deactivated_stake_lamports, 4000);
-        
+
         // Verify validator count
         assert_eq!(stats.validator_count, 4);
     }

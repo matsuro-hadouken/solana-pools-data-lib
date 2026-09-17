@@ -1,67 +1,3 @@
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::types::{StakeDelegation, StakeAuthorized, StakeLockup};
-    #[test]
-    fn test_calculate_pool_statistics_basic() {
-        let stake_accounts = vec![
-                StakeAccountInfo {
-                    pubkey: "account1".to_string(),
-                lamports: 1000,
-                rent_exempt_reserve: 0,
-                delegation: Some(StakeDelegation {
-                    voter: "validator1".to_string(),
-                    stake: 1000,
-                    activation_epoch: 1,
-                    deactivation_epoch: u64::MAX,
-                    last_epoch_credits_cumulative: 0,
-                    warmup_cooldown_rate: 0.25,
-                }),
-                authorized: StakeAuthorized { staker: "staker1".to_string(), withdrawer: "withdrawer1".to_string() },
-                lockup: StakeLockup { unix_timestamp: 0, epoch: 0, custodian: "".to_string() },
-            },
-            StakeAccountInfo {
-                pubkey: "account2".to_string(),
-                lamports: 2000,
-                rent_exempt_reserve: 0,
-                delegation: Some(StakeDelegation {
-                    voter: "validator2".to_string(),
-                    stake: 2000,
-                    activation_epoch: 1,
-                    deactivation_epoch: 10,
-                    last_epoch_credits_cumulative: 0,
-                    warmup_cooldown_rate: 0.25,
-                }),
-                authorized: StakeAuthorized { staker: "staker2".to_string(), withdrawer: "withdrawer2".to_string() },
-                lockup: StakeLockup { unix_timestamp: 0, epoch: 0, custodian: "".to_string() },
-            },
-        ];
-        let stats = PoolsDataClient::calculate_pool_statistics(&stake_accounts);
-        assert_eq!(stats.total_accounts, 2);
-        assert_eq!(stats.activating_accounts, 0); // No activating accounts without epoch
-        assert_eq!(stats.active_accounts, 1);
-        assert_eq!(stats.deactivating_accounts, 1);
-        assert_eq!(stats.deactivated_accounts, 0); // No deactivated accounts without epoch
-        assert_eq!(stats.total_lamports, 3000);
-        assert_eq!(stats.activating_stake_lamports, 0); // No activating stake without epoch
-        assert_eq!(stats.active_stake_lamports, 1000);
-        assert_eq!(stats.deactivating_stake_lamports, 2000);
-        assert_eq!(stats.deactivated_stake_lamports, 0); // No deactivated stake without epoch
-        assert_eq!(stats.validator_count, 2);
-    }
-
-    #[test]
-    fn empty_stake_accounts_produce_empty_statistics_not_an_error() {
-        // 81 of the 261 discovered pools hold under 10 SOL and routinely have zero
-        // stake accounts (everything sits in reserve). That is a healthy pool, not
-        // a failure — but it must stay visible, because an empty result is also
-        // what a mis-derived authority looks like.
-        let stats = PoolsDataClient::calculate_pool_statistics(&[]);
-        assert_eq!(stats.total_accounts, 0);
-        assert_eq!(stats.total_lamports, 0);
-        assert_eq!(stats.validator_count, 0);
-    }
-}
 /// Client for fetching pools data.
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -101,11 +37,16 @@ impl PoolsDataClient {
     ///
     /// # Errors
     /// Returns an error if pool statistics cannot be fetched or calculated.
-    pub async fn fetch_all_pools_with_stats(&self, current_epoch: u64) -> Result<std::collections::HashMap<String, statistics::PoolStatisticsFull>> {
+    pub async fn fetch_all_pools_with_stats(
+        &self,
+        current_epoch: u64,
+    ) -> Result<std::collections::HashMap<String, statistics::PoolStatisticsFull>> {
         // Validate epoch
         if current_epoch == 0 || current_epoch == u64::MAX || current_epoch > 10_000_000_000 {
             return Err(crate::error::PoolsDataError::InternalError {
-                message: format!("Invalid current_epoch passed to fetch_all_pools_with_stats: {current_epoch}"),
+                message: format!(
+                    "Invalid current_epoch passed to fetch_all_pools_with_stats: {current_epoch}"
+                ),
             });
         }
         let all_pools = get_active_pools();
@@ -251,7 +192,7 @@ impl PoolsDataClient {
     /// [`Self::fetch_pools`] returns `Ok` when at least one pool succeeds and
     /// silently drops the rest. That is fine for exploratory use, but it means a
     /// rate-limited endpoint can 429 most of a refresh and still hand back an
-    /// `Ok` map — 293 of 294 pools missing, with no signal. A writer that treats
+    /// `Ok` map — 270 of 271 pools missing, with no signal. A writer that treats
     /// "absent from the response" as "delete" would then wipe most of a table.
     ///
     /// Use this variant when a partial result is worse than no result, which is
@@ -420,7 +361,15 @@ impl PoolsDataClient {
         pool_info: PoolInfo,
         retry_attempts: u32,
         retry_base_delay: Duration,
-        rate_limiter: Option<Arc<governor::RateLimiter<governor::state::direct::NotKeyed, governor::state::InMemoryState, governor::clock::DefaultClock>>>,
+        rate_limiter: Option<
+            Arc<
+                governor::RateLimiter<
+                    governor::state::direct::NotKeyed,
+                    governor::state::InMemoryState,
+                    governor::clock::DefaultClock,
+                >,
+            >,
+        >,
     ) -> std::result::Result<PoolData, PoolError> {
         let _permit = semaphore.acquire().await.map_err(|e| {
             PoolError::new(
@@ -449,20 +398,20 @@ impl PoolsDataClient {
         // finished spending its whole budget. A permanent failure — invalid
         // params, a parse error, a misconfigured URL that now errors instead of
         // redirecting — cost 1+retry_attempts requests per pool, which across
-        // 294 pools turns one deterministic mistake into hundreds of pointless
+        // 271 pools turns one deterministic mistake into hundreds of pointless
         // requests against an endpoint that is usually already rate-limiting.
         let result = RetryIf::spawn(
             retry_strategy,
             || async {
-            // Every attempt takes a rate-limit permit, not just the first.
-            // Awaiting the limiter once outside this closure let retries bypass
-            // the configured rate entirely — so a struggling endpoint would be
-            // hit faster than configured at precisely the moment it is failing.
-            // Backoff alone does not bound the aggregate: up to `max_concurrent`
-            // pools retry in parallel, each on its own uncounted timeline.
-            if let Some(limiter) = &rate_limiter {
-                limiter.until_ready().await;
-            }
+                // Every attempt takes a rate-limit permit, not just the first.
+                // Awaiting the limiter once outside this closure let retries bypass
+                // the configured rate entirely — so a struggling endpoint would be
+                // hit faster than configured at precisely the moment it is failing.
+                // Backoff alone does not bound the aggregate: up to `max_concurrent`
+                // pools retry in parallel, each on its own uncounted timeline.
+                if let Some(limiter) = &rate_limiter {
+                    limiter.until_ready().await;
+                }
                 rpc_client
                     .fetch_stake_accounts_for_authority(&pool_info.authority)
                     .await
@@ -583,7 +532,7 @@ impl PoolsDataClient {
             if let Some(delegation) = &account.delegation {
                 total_accounts += 1;
                 validator_set.insert(&delegation.voter);
-                
+
                 if delegation.deactivation_epoch == u64::MAX {
                     // Assume active if not deactivating (can't detect activating without epoch)
                     active_accounts += 1;
@@ -610,5 +559,84 @@ impl PoolsDataClient {
             deactivated_stake_lamports, // Will be 0 without epoch
             validator_count: validator_set.len(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{StakeAuthorized, StakeDelegation, StakeLockup};
+    #[test]
+    fn test_calculate_pool_statistics_basic() {
+        let stake_accounts = vec![
+            StakeAccountInfo {
+                pubkey: "account1".to_string(),
+                lamports: 1000,
+                rent_exempt_reserve: 0,
+                delegation: Some(StakeDelegation {
+                    voter: "validator1".to_string(),
+                    stake: 1000,
+                    activation_epoch: 1,
+                    deactivation_epoch: u64::MAX,
+                    last_epoch_credits_cumulative: 0,
+                    warmup_cooldown_rate: 0.25,
+                }),
+                authorized: StakeAuthorized {
+                    staker: "staker1".to_string(),
+                    withdrawer: "withdrawer1".to_string(),
+                },
+                lockup: StakeLockup {
+                    unix_timestamp: 0,
+                    epoch: 0,
+                    custodian: "".to_string(),
+                },
+            },
+            StakeAccountInfo {
+                pubkey: "account2".to_string(),
+                lamports: 2000,
+                rent_exempt_reserve: 0,
+                delegation: Some(StakeDelegation {
+                    voter: "validator2".to_string(),
+                    stake: 2000,
+                    activation_epoch: 1,
+                    deactivation_epoch: 10,
+                    last_epoch_credits_cumulative: 0,
+                    warmup_cooldown_rate: 0.25,
+                }),
+                authorized: StakeAuthorized {
+                    staker: "staker2".to_string(),
+                    withdrawer: "withdrawer2".to_string(),
+                },
+                lockup: StakeLockup {
+                    unix_timestamp: 0,
+                    epoch: 0,
+                    custodian: "".to_string(),
+                },
+            },
+        ];
+        let stats = PoolsDataClient::calculate_pool_statistics(&stake_accounts);
+        assert_eq!(stats.total_accounts, 2);
+        assert_eq!(stats.activating_accounts, 0); // No activating accounts without epoch
+        assert_eq!(stats.active_accounts, 1);
+        assert_eq!(stats.deactivating_accounts, 1);
+        assert_eq!(stats.deactivated_accounts, 0); // No deactivated accounts without epoch
+        assert_eq!(stats.total_lamports, 3000);
+        assert_eq!(stats.activating_stake_lamports, 0); // No activating stake without epoch
+        assert_eq!(stats.active_stake_lamports, 1000);
+        assert_eq!(stats.deactivating_stake_lamports, 2000);
+        assert_eq!(stats.deactivated_stake_lamports, 0); // No deactivated stake without epoch
+        assert_eq!(stats.validator_count, 2);
+    }
+
+    #[test]
+    fn empty_stake_accounts_produce_empty_statistics_not_an_error() {
+        // 81 of the 261 discovered pools hold under 10 SOL and routinely have zero
+        // stake accounts (everything sits in reserve). That is a healthy pool, not
+        // a failure — but it must stay visible, because an empty result is also
+        // what a mis-derived authority looks like.
+        let stats = PoolsDataClient::calculate_pool_statistics(&[]);
+        assert_eq!(stats.total_accounts, 0);
+        assert_eq!(stats.total_lamports, 0);
+        assert_eq!(stats.validator_count, 0);
     }
 }
